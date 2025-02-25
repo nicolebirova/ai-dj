@@ -17,9 +17,9 @@ load_dotenv()
 
 # Spotify OAuth Setup
 sp_oauth = SpotifyOAuth(
-    client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-    client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
+    client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
+    client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
+    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
     scope="user-top-read user-library-read"
 )
 

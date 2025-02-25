@@ -17,13 +17,13 @@ from music_utils import get_user_preferences, get_song_metadata, interpret_user_
 load_dotenv()
 
 # Set OpenAI API Key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.environ.get("SPOTIPY_CLIENT_SECRET")
 
 # Spotify OAuth Setup
 sp_oauth = SpotifyOAuth(
-    client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-    client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
+    client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
+    client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
+    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
     scope="user-top-read user-library-read playlist-modify-public"
 )
 
