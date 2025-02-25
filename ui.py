@@ -4,7 +4,6 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
 import shutil
-import urllib.parse
 
 st.set_page_config(page_title="AI DJ - Playlist Generator", page_icon="🎵", layout="wide")
 
@@ -28,33 +27,40 @@ for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "pla
     if key not in st.session_state:
         st.session_state[key] = False if "authenticated" in key else None if "token_info" in key else []
 
-query_params = st.query_params()
-if "code" in query_params:
-    auth_code = query_params["code"][0]
-    try:
-        token_info = sp_oauth.get_access_token(auth_code)
-        st.session_state.token_info = token_info
-        st.session_state.authenticated = True
-        st.session_state.user_switched = True
-
-        sp = spotipy.Spotify(auth=token_info["access_token"])
-        st.session_state.user_info = sp.current_user()
-
-        st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
-        st.query_params()  
-        st.rerun()  
-    except Exception as e:
-        st.error(f"❌ Authentication failed: {e}")
-
 if not st.session_state.authenticated:
     st.title("🎵 Welcome to Your AI DJ! 🎶")
 
     auth_url = sp_oauth.get_authorize_url()
-    
-    js_code = f"window.location.href = '{auth_url}';"
-    
-    if st.button("Login to Spotify"):
-        st.components.v1.html(f"<script>{js_code}</script>", height=0)
+
+    st.markdown(
+        f'<a href="{auth_url}">'
+        '<button style="background-color:#1DB954;color:white;padding:10px 20px;'
+        'border:none;border-radius:5px;cursor:pointer;font-size:16px;">Login to Spotify</button></a>',
+        unsafe_allow_html=True
+    )
+
+    st.subheader("2️⃣ Paste the redirected URL here:")
+    redirected_url = st.text_input("Enter the URL after login:")
+
+    if st.button("Authenticate"):
+        if "code=" in redirected_url:
+            try:
+                code = redirected_url.split("code=")[-1].split("&")[0]
+                token_info = sp_oauth.get_access_token(code)
+
+                st.session_state.token_info = token_info
+                st.session_state.authenticated = True
+                st.session_state.user_switched = True
+
+                sp = spotipy.Spotify(auth=token_info["access_token"])
+                st.session_state.user_info = sp.current_user()
+
+                st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
+                st.rerun()  # Refresh UI
+            except Exception as e:
+                st.error(f"❌ Authentication failed: {e}")
+        else:
+            st.error("❌ Invalid URL. Paste the full redirect URL after login.")
 
 if st.session_state.authenticated:
     sp = spotipy.Spotify(auth=st.session_state.token_info["access_token"])
@@ -122,7 +128,7 @@ if st.session_state.authenticated and st.session_state.playlist:
                 st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_column_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
-                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{urllib.parse.quote(song['title'])} {urllib.parse.quote(song['artist'])})")
+                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
 
     if st.button("Make a New Playlist Request"):
         st.session_state.playlist = None
