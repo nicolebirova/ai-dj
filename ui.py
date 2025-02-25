@@ -95,7 +95,8 @@ if st.session_state.authenticated:
     user_query = st.text_input("Enter your playlist request 🎶:", "")
 
     if st.button("Generate Playlist"):
-        response = requests.get(f"http://127.0.0.1:8000/generate_playlist?user_query={user_query}")
+        FASTAPI_URL = "https://ai-dj-o4qg.onrender.com"
+        response = requests.get(f"{FASTAPI_URL}/generate_playlist?user_query={user_query}")
 
         if response.status_code == 200:
             data = response.json()
