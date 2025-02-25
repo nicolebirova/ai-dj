@@ -58,7 +58,7 @@ if not st.session_state.authenticated:
 # **🔹 Authentication Process**
 if st.session_state.show_auth and not st.session_state.authenticated:
     st.subheader("1️⃣ Click the link below to log in with Spotify:")
-    st.markdown(f'<a href="{auth_url}" target="_self"><button>Login to Spotify</button></a>', unsafe_allow_html=True)
+    st.write(f'<meta http-equiv="refresh" content="0;URL={auth_url}">', unsafe_allow_html=True)
 
 
     st.subheader("2️⃣ Paste the redirected URL here:")
