@@ -51,10 +51,10 @@ if not st.session_state.authenticated:
     st.title("🎵 Welcome to Your AI DJ! 🎶")
 
     auth_url = sp_oauth.get_authorize_url()
-    
-    if st.button("Connect to your Spotify to get started!"):
-        st.session_state.show_auth = True
-        st.rerun()  # Forces UI update
+
+    if st.button("Login to Spotify"):
+        js = f"window.location.href = '{auth_url}';"
+        components.html(f"<script>{js}</script>", height=0)
 
 # **🔹 Authentication Process**
 if st.session_state.show_auth and not st.session_state.authenticated:
