@@ -126,7 +126,7 @@ if st.session_state.authenticated and st.session_state.playlist:
         with st.container():
             col1, col2 = st.columns([1, 4])
             with col1:
-                st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_column_width=True)
+                st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_container_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
                 st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
