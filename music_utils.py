@@ -158,11 +158,17 @@ def generate_constrained_playlist(user_query):
 
     user_data = get_user_preferences()
     user_songs = []
+    only_user_songs = "only" in user_query.lower()
 
-    if "liked songs" in user_query.lower():
+
+    if "liked songs" in user_query.lower() or "my favorites" in user_query.lower():
         user_songs = user_data["liked_songs"]
     elif "top tracks" in user_query.lower():
         user_songs = user_data["top_tracks"]
+
+    if only_user_songs and user_songs:
+        playlist = user_songs[:num_songs]
+        return {"playlist": playlist}
 
     if user_songs:
         playlist = user_songs[:num_songs]  
