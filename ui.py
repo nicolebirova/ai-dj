@@ -33,7 +33,7 @@ if not st.session_state.authenticated:
     auth_url = sp_oauth.get_authorize_url()
 
     st.markdown(
-        f'<a href="{auth_url}" target="_self">'
+        f'<a href="{auth_url}">'
         '<button style="background-color:#1DB954;color:white;padding:10px 20px;'
         'border:none;border-radius:5px;cursor:pointer;font-size:16px;">Login to Spotify</button></a>',
         unsafe_allow_html=True
@@ -56,7 +56,7 @@ if not st.session_state.authenticated:
                 st.session_state.user_info = sp.current_user()
 
                 st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
-                st.rerun()
+                st.rerun()  # Refresh UI
             except Exception as e:
                 st.error(f"❌ Authentication failed: {e}")
         else:
