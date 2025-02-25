@@ -59,7 +59,7 @@ if not st.session_state.authenticated:
 if st.session_state.show_auth and not st.session_state.authenticated:
     st.subheader("1️⃣ Click the link below to log in with Spotify:")
     if st.button("Login to Spotify"):
-        auth_url = sp_oauth.get_authorize_url(show_dialog=True)  # Forces fresh login each time
+        auth_url = sp_oauth.get_authorize_url()  
         st.write(f'<meta http-equiv="refresh" content="0;URL={auth_url}">', unsafe_allow_html=True)
 
     st.subheader("2️⃣ Paste the redirected URL here:")
