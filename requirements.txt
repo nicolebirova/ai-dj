@@ -7,4 +7,3 @@ requests
 python-multipart
 streamlit
 pillow
-shutil
