@@ -7,9 +7,9 @@ import shutil
 
 st.set_page_config(page_title="AI DJ - Playlist Generator", page_icon="🎵", layout="wide")
 
-SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
-SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI")
+SPOTIPY_CLIENT_ID = os.environ.get("SPOTIPY_CLIENT_ID")
+SPOTIPY_CLIENT_SECRET = os.environ.get("SPOTIPY_CLIENT_SECRET")
+SPOTIPY_REDIRECT_URI = os.environ.get("SPOTIPY_REDIRECT_URI")
 CACHE_PATH = ".spotify_caches"
 
 if os.path.exists(CACHE_PATH):
