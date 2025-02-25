@@ -161,6 +161,7 @@ def generate_constrained_playlist(user_query):
         - BPM range: {bpm_start} to {bpm_end} ({'gradual increase' if gradual_increase else 'fixed range'})
         - Release years: {release_year_range[0]} to {release_year_range[1]}
         - Mood constraints: {mood_constraints}
+        - use only user songs: {use_only_user_songs}
         - **Duration:** {duration} min (~{num_songs} songs)
 
         🎬 **Ensure BPM follows the correct order if gradual increase is requested.**
