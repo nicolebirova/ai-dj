@@ -17,7 +17,7 @@ from music_utils import get_user_preferences, get_song_metadata, interpret_user_
 load_dotenv()
 
 # Set OpenAI API Key
-openai.api_key = os.environ.get("SPOTIPY_CLIENT_SECRET")
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # Spotify OAuth Setup
 sp_oauth = SpotifyOAuth(
