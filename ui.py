@@ -44,8 +44,9 @@ if not st.session_state.authenticated:
     auth_url = sp_oauth.get_authorize_url() 
     
     if st.button("Connect to your Spotify to get started!"):
-        st.session_state.show_auth = True 
-        st.rerun()
+        auth_url = sp_oauth.get_authorize_url()
+        js = f"window.open('{auth_url}', '_self')"
+        st.components.v1.html(f"<script>{js}</script>", height=0)
 
 if st.session_state.show_auth and not st.session_state.authenticated:
     st.subheader("1️⃣ Click the link below to log in with Spotify:")
