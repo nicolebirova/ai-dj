@@ -60,7 +60,6 @@ def get_song_metadata(track_name, artist_name):
 
 # Query Understanding
 def interpret_user_query(user_query):
-    
     duration_match = re.search(r"(\d+(\.\d+)?)\s*(hour|hr|min|minutes)", user_query, re.IGNORECASE)
     extracted_duration = None
     if duration_match:
@@ -69,11 +68,11 @@ def interpret_user_query(user_query):
 
     if extracted_duration is None:
         if "car ride" in user_query.lower():
-            extracted_duration = 45  # Assume ~45 min car ride
+            extracted_duration = 45  
         elif "workout" in user_query.lower():
-            extracted_duration = 60  # Assume ~60 min workout
+            extracted_duration = 60  
         elif "study session" in user_query.lower():
-            extracted_duration = 90  # Assume ~90 min study session
+            extracted_duration = 90  
 
     genres, mood_constraints = [], []
     
@@ -83,6 +82,8 @@ def interpret_user_query(user_query):
     elif "relax" in user_query.lower() or "stress" in user_query.lower():
         genres = ["lofi", "chill", "ambient", "soft rock", "indie"]
         mood_constraints = ["calm", "peaceful", "soothing"]
+
+    use_only_user_songs = "only" in user_query.lower() and any(term in user_query.lower() for term in ["liked songs", "my favorites", "favorite", "top tracks"])
 
     prompt = f"""
     Extract structured playlist constraints from the following user request:
@@ -94,7 +95,8 @@ def interpret_user_query(user_query):
       "bpm_range": [lowest BPM, highest BPM] (default: [60, 130]),
       "genres": {genres if genres else '["any"]'},
       "release_year_range": [last 5 years] (default if unspecified),
-      "mood_constraints": {mood_constraints if mood_constraints else '[]'}
+      "mood_constraints": {mood_constraints if mood_constraints else '[]'},
+      "use_only_user_songs": {"true" if use_only_user_songs else "false"}
     }}
     """
 
@@ -125,6 +127,7 @@ def interpret_user_query(user_query):
     extracted_data.setdefault("genres", genres if genres else ["any"])
     extracted_data.setdefault("release_year_range", [2019, 2024])
     extracted_data.setdefault("mood_constraints", mood_constraints if mood_constraints else [])
+    extracted_data.setdefault("use_only_user_songs", use_only_user_songs)
 
     print("✅ Final Extracted Data:", extracted_data)
     return extracted_data
@@ -167,23 +170,28 @@ def generate_constrained_playlist(user_query):
         user_songs = user_data["top_tracks"]
 
     if only_user_songs:
-        if user_songs:
-            filtered_songs = user_songs
-            if genres and "any" not in genres:
-                filtered_songs = [song for song in user_songs if any(genre in genres for genre in user_data["top_genres"])]
-
-            playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in filtered_songs[:num_songs]]
-
-            print(f"✅ Returning ONLY user songs ({len(playlist)}/{num_songs} requested)")
-            return {"playlist": playlist}
-        else:
+        if not user_songs:
             print("❌ No user songs found. Cannot generate a playlist with ONLY user songs.")
             return {"error": "You requested only your songs, but no matching songs were found."}
 
+        filtered_songs = user_songs
+        if genres and "any" not in genres:
+            filtered_songs = [
+                song for song in user_songs if any(genre in genres for genre in user_data["top_genres"])
+            ]
+
+        playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in filtered_songs[:num_songs]]
+
+        print(f"✅ Returning ONLY user songs ({len(playlist)}/{num_songs} requested)")
+        return {"playlist": playlist}
+
+    playlist = []
     if user_songs:
-        playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in user_songs[:num_songs]]
-        print(f"✅ Using user songs ({len(playlist)}/{num_songs} requested)")
-    else:
+        playlist.extend([{"title": song["name"], "artist": song["artist"], "liked": True} for song in user_songs[:num_songs]])
+
+    remaining_slots = num_songs - len(playlist)
+
+    if remaining_slots > 0:
         prompt = f"""
         Generate a playlist with the following constraints:
         - Genres: {genres}
@@ -193,10 +201,11 @@ def generate_constrained_playlist(user_query):
         - **Duration:** {duration} min (~{num_songs} songs)
 
         🎬 **Ensure BPM follows the correct order if gradual increase is requested.**
+        🎵 **Include a "liked" field (True/False) indicating whether the song is in the user's liked songs.**
 
         Respond in JSON format:
         [
-            {{"title": "REAL SONG", "artist": "REAL ARTIST", "bpm": {bpm_start}, "release_year": {release_year_range[0]}, "mood": "matching mood"}},
+            {{"title": "REAL SONG", "artist": "REAL ARTIST", "bpm": {bpm_start}, "release_year": {release_year_range[0]}, "mood": "matching mood", "liked": False}},
             ...
         ]
         """
@@ -214,15 +223,16 @@ def generate_constrained_playlist(user_query):
 
             json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
             if json_part:
-                playlist = json.loads(json_part.group(0))
+                ai_playlist = json.loads(json_part.group(0))
 
                 if gradual_increase:
-                    playlist = sorted(playlist, key=lambda x: x["bpm"])
+                    ai_playlist = sorted(ai_playlist, key=lambda x: x["bpm"])
 
-                for song in playlist:
+                for song in ai_playlist:
                     song["liked"] = (song["title"].lower(), song["artist"].lower()) in liked_songs_set
 
-                playlist = playlist[:num_songs]
+                playlist.extend(ai_playlist[:remaining_slots])
+
                 print(f"✅ Using AI-generated songs ({len(playlist)}/{num_songs} requested)")
 
             else:
