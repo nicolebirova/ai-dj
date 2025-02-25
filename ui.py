@@ -39,7 +39,7 @@ if not st.session_state.authenticated:
         unsafe_allow_html=True
     )
 
-    st.subheader("2️⃣ Paste the redirected URL here:")
+    st.subheader("Paste the redirected URL here:")
     redirected_url = st.text_input("Enter the URL after login:")
 
     if st.button("Authenticate"):
