@@ -131,9 +131,7 @@ def interpret_user_query(user_query):
 
 # Generate Playlist
 def generate_constrained_playlist(user_query):
-    """
-    Generates a playlist dynamically based on the user's request.
-    """
+  
     constraints = interpret_user_query(user_query)
 
     duration = constraints["duration_minutes"]
@@ -153,53 +151,65 @@ def generate_constrained_playlist(user_query):
 
     print(f"🎵 Generating a {duration}-minute playlist | BPM {bpm_start} → {bpm_end} | Genres: {genres} | Years: {release_year_range}")
 
-    avg_song_length = 4 
+    avg_song_length = 4  
     num_songs = max(5, round(duration / avg_song_length))  
 
     bpm_step = (bpm_end - bpm_start) / max(1, num_songs - 1) if gradual_increase else 0
 
-    prompt = f"""
-    Generate a playlist with the following constraints:
-    - Genres: {genres}
-    - BPM range: {bpm_start} to {bpm_end} ({'gradual increase' if gradual_increase else 'fixed range'})
-    - Release years: {release_year_range[0]} to {release_year_range[1]}
-    - Mood constraints: {mood_constraints}
-    - **Duration:** {duration} min (~{num_songs} songs)
-    
-    🎬 **Ensure BPM follows the correct order if gradual increase is requested.**
+    user_data = get_user_preferences()
+    user_songs = []
 
-    Respond in JSON format:
-    [
-        {{"title": "REAL SONG", "artist": "REAL ARTIST", "bpm": {bpm_start}, "release_year": {release_year_range[0]}, "mood": "matching mood"}},
-        ...
-    ]
-    """
+    if "liked songs" in user_query.lower():
+        user_songs = user_data["liked_songs"]
+    elif "top tracks" in user_query.lower():
+        user_songs = user_data["top_tracks"]
 
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "system", "content": "You are a music expert AI that generates playlists."},
-                      {"role": "user", "content": prompt}],
-            temperature=0.7
-        )
+    if user_songs:
+        playlist = user_songs[:num_songs]  
+    else:
+        prompt = f"""
+        Generate a playlist with the following constraints:
+        - Genres: {genres}
+        - BPM range: {bpm_start} to {bpm_end} ({'gradual increase' if gradual_increase else 'fixed range'})
+        - Release years: {release_year_range[0]} to {release_year_range[1]}
+        - Mood constraints: {mood_constraints}
+        - **Duration:** {duration} min (~{num_songs} songs)
 
-        raw_content = response.choices[0].message.content
-        print("🔍 OpenAI Raw Response:", raw_content)
+        🎬 **Ensure BPM follows the correct order if gradual increase is requested.**
 
-        json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
-        if json_part:
-            playlist = json.loads(json_part.group(0))
+        Respond in JSON format:
+        [
+            {{"title": "REAL SONG", "artist": "REAL ARTIST", "bpm": {bpm_start}, "release_year": {release_year_range[0]}, "mood": "matching mood"}},
+            ...
+        ]
+        """
 
-            if gradual_increase:
-                playlist = sorted(playlist, key=lambda x: x["bpm"])
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "system", "content": "You are a music expert AI that generates playlists."},
+                          {"role": "user", "content": prompt}],
+                temperature=0.7
+            )
 
-            playlist = playlist[:num_songs]
+            raw_content = response.choices[0].message.content
+            print("🔍 OpenAI Raw Response:", raw_content)
 
-            return {"playlist": playlist}
+            json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
+            if json_part:
+                playlist = json.loads(json_part.group(0))
 
-        print("No valid JSON found in OpenAI response")
-        return {"error": "Failed to generate playlist"}
+                if gradual_increase:
+                    playlist = sorted(playlist, key=lambda x: x["bpm"])
 
-    except Exception as e:
-        print("OpenAI API Error:", str(e))
-        return {"error": "Failed to generate playlist"}
+                playlist = playlist[:num_songs]
+
+            else:
+                print("No valid JSON found in OpenAI response")
+                return {"error": "Failed to generate playlist"}
+
+        except Exception as e:
+            print("OpenAI API Error:", str(e))
+            return {"error": "Failed to generate playlist"}
+
+    return {"playlist": playlist}
