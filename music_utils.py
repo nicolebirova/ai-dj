@@ -156,38 +156,34 @@ def generate_constrained_playlist(user_query):
     bpm_step = (bpm_end - bpm_start) / max(1, num_songs - 1) if gradual_increase else 0
 
     user_data = get_user_preferences()
+    liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]}
     user_songs = []
     only_user_songs = "only" in user_query.lower()
 
-    # ✅ Now mapping "favorite" to both "liked songs" and "top tracks"
     if any(term in user_query.lower() for term in ["liked songs", "my favorites", "favorite", "favourites"]):
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
 
     elif "top tracks" in user_query.lower():
         user_songs = user_data["top_tracks"]
 
-    # ✅ Handle "ONLY" condition properly
     if only_user_songs:
         if user_songs:
-            # Filter user songs by genre if specified
             filtered_songs = user_songs
             if genres and "any" not in genres:
                 filtered_songs = [song for song in user_songs if any(genre in genres for genre in user_data["top_genres"])]
 
-            playlist = filtered_songs[:num_songs] if filtered_songs else user_songs[:num_songs]
-            
+            playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in filtered_songs[:num_songs]]
+
             print(f"✅ Returning ONLY user songs ({len(playlist)}/{num_songs} requested)")
             return {"playlist": playlist}
         else:
             print("❌ No user songs found. Cannot generate a playlist with ONLY user songs.")
             return {"error": "You requested only your songs, but no matching songs were found."}
 
-    # ✅ If user songs exist, prioritize them
     if user_songs:
-        playlist = user_songs[:num_songs]
+        playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in user_songs[:num_songs]]
         print(f"✅ Using user songs ({len(playlist)}/{num_songs} requested)")
     else:
-        # ✅ If no user songs match, use AI-generated songs
         prompt = f"""
         Generate a playlist with the following constraints:
         - Genres: {genres}
@@ -222,6 +218,9 @@ def generate_constrained_playlist(user_query):
 
                 if gradual_increase:
                     playlist = sorted(playlist, key=lambda x: x["bpm"])
+
+                for song in playlist:
+                    song["liked"] = (song["title"].lower(), song["artist"].lower()) in liked_songs_set
 
                 playlist = playlist[:num_songs]
                 print(f"✅ Using AI-generated songs ({len(playlist)}/{num_songs} requested)")
