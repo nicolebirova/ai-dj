@@ -28,7 +28,7 @@ for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "pla
     if key not in st.session_state:
         st.session_state[key] = False if "authenticated" in key else None if "token_info" in key else []
 
-query_params = st.experimental_get_query_params()
+query_params = st.query_params()
 if "code" in query_params:
     auth_code = query_params["code"][0]
     try:
@@ -41,7 +41,7 @@ if "code" in query_params:
         st.session_state.user_info = sp.current_user()
 
         st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
-        st.experimental_set_query_params()  
+        st.query_params()  
         st.rerun()  
     except Exception as e:
         st.error(f"❌ Authentication failed: {e}")
