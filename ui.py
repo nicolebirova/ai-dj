@@ -27,56 +27,15 @@ for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "pla
     if key not in st.session_state:
         st.session_state[key] = False if "authenticated" in key else None if "token_info" in key else []
 
-st.markdown(
-    """
-    <style>
-        .spotify-button {
-            background-color: #1DB954;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 5px;
-            font-size: 18px;
-            font-weight: bold;
-            cursor: pointer;
-            width: 250px;
-            text-align: center;
-            margin: auto;
-            display: block;
-        }
-        .sidebar-header {
-            font-size: 24px;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
-        .song-container {
-            display: flex;
-            align-items: center;
-            margin-bottom: 15px;
-            padding: 10px;
-            background-color: #f5f5f5;
-            border-radius: 10px;
-        }
-        .song-cover {
-            width: 80px;
-            height: 80px;
-            border-radius: 10px;
-            margin-right: 15px;
-        }
-        .song-details {
-            flex-grow: 1;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 if not st.session_state.authenticated:
     st.title("🎵 Welcome to Your AI DJ! 🎶")
+
     auth_url = sp_oauth.get_authorize_url()
 
     st.markdown(
-        f'<a href="{auth_url}" class="spotify-button">Login to Spotify</a>',
+        f'<a href="{auth_url}">'
+        '<button style="background-color:#1DB954;color:white;padding:10px 20px;'
+        'border:none;border-radius:5px;cursor:pointer;font-size:16px;">Login to Spotify</button></a>',
         unsafe_allow_html=True
     )
 
@@ -97,7 +56,7 @@ if not st.session_state.authenticated:
                 st.session_state.user_info = sp.current_user()
 
                 st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
-                st.rerun()
+                st.rerun()  # Refresh UI
             except Exception as e:
                 st.error(f"❌ Authentication failed: {e}")
         else:
@@ -107,34 +66,30 @@ if st.session_state.authenticated:
     sp = spotipy.Spotify(auth=st.session_state.token_info["access_token"])
     st.session_state.user_info = sp.current_user()
 
-    with st.sidebar:
-        st.markdown("<div class='sidebar-header'>🎶 Your Favorites 🎧</div>", unsafe_allow_html=True)
+    st.sidebar.header("🎶 Your Favorites 🎧")
 
-        profile_image = st.session_state.user_info["images"][0]["url"] if st.session_state.user_info["images"] else "https://via.placeholder.com/100"
-        st.image(profile_image, width=100)
-        st.sidebar.write(f"👤 **{st.session_state.user_info['display_name']}**")
+    if not st.session_state.favorites_loaded or st.session_state.user_switched:
+        top_artists = sp.current_user_top_artists(limit=5)["items"]
+        top_tracks = sp.current_user_top_tracks(limit=5)["items"]
+        top_genres = list(set(genre for artist in top_artists for genre in artist["genres"]))
 
-        if not st.session_state.favorites_loaded or st.session_state.user_switched:
-            top_artists = sp.current_user_top_artists(limit=5)["items"]
-            top_tracks = sp.current_user_top_tracks(limit=5)["items"]
-            top_genres = list(set(genre for artist in top_artists for genre in artist["genres"]))
+        st.session_state.favorites = {
+            "top_artists": [artist["name"] for artist in top_artists],
+            "top_tracks": [f"{track['name']} - {track['artists'][0]['name']}" for track in top_tracks],
+            "top_genres": top_genres
+        }
+        st.session_state.favorites_loaded = True
+        st.session_state.user_switched = False  
 
-            st.session_state.favorites = {
-                "top_artists": [artist["name"] for artist in top_artists],
-                "top_tracks": [f"{track['name']} - {track['artists'][0]['name']}" for track in top_tracks],
-                "top_genres": top_genres
-            }
-            st.session_state.favorites_loaded = True
-            st.session_state.user_switched = False  
+    st.sidebar.subheader(f"Hello, {st.session_state.user_info['display_name']}! 👋")
+    st.sidebar.write("🎤 **Top Artists:**")
+    for artist in st.session_state.favorites["top_artists"]:
+        st.sidebar.write(f"✅ {artist}")
 
-        st.sidebar.write("🎤 **Top Artists:**")
-        for artist in st.session_state.favorites["top_artists"]:
-            st.sidebar.write(f"✅ {artist}")
-
-        st.sidebar.write("🎶 **Favorite Genres:**", ", ".join(st.session_state.favorites["top_genres"]))
-        st.sidebar.write("📀 **Top Songs:**")
-        for track in st.session_state.favorites["top_tracks"]:
-            st.sidebar.write(f"🎵 {track}")
+    st.sidebar.write("🎶 **Favorite Genres:**", ", ".join(st.session_state.favorites["top_genres"]))
+    st.sidebar.write("📀 **Top Songs:**")
+    for track in st.session_state.favorites["top_tracks"]:
+        st.sidebar.write(f"🎵 {track}")
 
     st.title("🎵 AI DJ - Generate Your Playlist")
     user_query = st.text_input("Enter your playlist request 🎶:", "")
@@ -167,18 +122,13 @@ if st.session_state.authenticated and st.session_state.playlist:
     st.write(f"**Total Duration:** {total_duration} minutes")
 
     for i, song in enumerate(st.session_state.playlist):
-        st.markdown(
-            f"""
-            <div class="song-container">
-                <img src="{st.session_state.album_covers[i] if st.session_state.album_covers[i] else 'https://via.placeholder.com/200'}" class="song-cover"/>
-                <div class="song-details">
-                    <b>{song['title']}</b> - {song['artist']}<br>
-                    <a href="https://open.spotify.com/search/{song['title']} {song['artist']}" target="_blank">▶️ Listen on Spotify</a>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        with st.container():
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_column_width=True)
+            with col2:
+                st.write(f"**{song['title']}** - {song['artist']}")
+                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
 
     if st.button("Make a New Playlist Request"):
         st.session_state.playlist = None
