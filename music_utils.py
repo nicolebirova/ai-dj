@@ -160,15 +160,18 @@ def generate_constrained_playlist(user_query):
     user_songs = []
     only_user_songs = "only" in user_query.lower()
 
-
     if "liked songs" in user_query.lower() or "my favorites" in user_query.lower():
         user_songs = user_data["liked_songs"]
     elif "top tracks" in user_query.lower():
         user_songs = user_data["top_tracks"]
 
-    if only_user_songs and user_songs:
-        playlist = user_songs[:num_songs]
-        return {"playlist": playlist}
+    if only_user_songs:
+        if user_songs:
+            filtered_songs = [song for song in user_songs if any(genre in genres for genre in user_data["top_genres"])]
+            playlist = filtered_songs[:num_songs] if filtered_songs else user_songs[:num_songs]
+            return {"playlist": playlist}
+        else:
+            return {"error": "You requested only your songs, but no matching songs were found."}
 
     if user_songs:
         playlist = user_songs[:num_songs]  
