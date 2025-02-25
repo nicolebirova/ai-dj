@@ -5,6 +5,7 @@ from spotipy.oauth2 import SpotifyOAuth
 import os
 import shutil
 import time
+import streamlit.components.v1 as components
 
 # 🎨 Page Configuration
 st.set_page_config(page_title="AI DJ - Playlist Generator", page_icon="🎵", layout="wide")
@@ -59,8 +60,9 @@ if not st.session_state.authenticated:
 if st.session_state.show_auth and not st.session_state.authenticated:
     st.subheader("1️⃣ Click the link below to log in with Spotify:")
     if st.button("Login to Spotify"):
-        auth_url = sp_oauth.get_authorize_url()  
-        st.write(f'<meta http-equiv="refresh" content="0;URL={auth_url}">', unsafe_allow_html=True)
+        auth_url = sp_oauth.get_authorize_url()
+        js = f"window.open('{auth_url}', '_blank')"
+        components.html(f"<script>{js}</script>", height=0)
 
     st.subheader("2️⃣ Paste the redirected URL here:")
     redirected_url = st.text_input("Enter URL:")
