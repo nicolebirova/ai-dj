@@ -129,9 +129,12 @@ if st.session_state.authenticated and st.session_state.playlist:
                 st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_container_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
-                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
+                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})") ###hyperlink needs to be fixed 
 
     if st.button("Make a New Playlist Request"):
         st.session_state.playlist = None
         st.session_state.album_covers = []
         st.rerun()
+
+    ### add save playlist button
+    ## add whether or not it is a liked song?

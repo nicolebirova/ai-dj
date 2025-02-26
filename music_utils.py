@@ -144,7 +144,7 @@ def generate_constrained_playlist(user_query):
     bpm_range = constraints["bpm_range"]
     genres = constraints["genres"]
     release_year_range = constraints["release_year_range"]
-    mood_constraints = constraints["mood_constraints"]
+    mood_constraints = constraints["mood_constraints"] ### why are we pulling this
     use_only_user_songs = constraints["use_only_user_songs"]
 
     gradual_increase = False
@@ -164,7 +164,7 @@ def generate_constrained_playlist(user_query):
     bpm_step = (bpm_end - bpm_start) / max(1, num_songs - 1) if gradual_increase else 0
 
     user_data = get_user_preferences()
-    liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]}
+    liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]} ##?? needs implementation
     user_songs = []
 
     if any(term in user_query.lower() for term in ["liked songs", "my favorites", "favorite", "favourites"]):
@@ -175,7 +175,7 @@ def generate_constrained_playlist(user_query):
 
     if use_only_user_songs:
         if user_songs:
-            filtered_songs = user_songs
+            filtered_songs = user_songs ###### needs to compare user songs to filter songs (NEED TO FIX), curr opposite
             if genres and "any" not in genres:
                 filtered_songs = [song for song in user_songs if any(genre in genres for genre in user_data["top_genres"])]
 
@@ -191,8 +191,6 @@ def generate_constrained_playlist(user_query):
         playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in user_songs[:num_songs]]
         print(f"✅ Using user songs ({len(playlist)}/{num_songs} requested)")
     else:
-        # OpenAI Playlist Generation
-        # (same as before)
         pass
 
     return {"playlist": playlist}
