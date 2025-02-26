@@ -144,7 +144,7 @@ def generate_constrained_playlist(user_query):
     bpm_range = constraints["bpm_range"]
     genres = constraints["genres"]
     release_year_range = constraints["release_year_range"]
-    mood_constraints = constraints["mood_constraints"] ### mood is not being implemented
+    mood_constraints = constraints["mood_constraints"]
     use_only_user_songs = constraints["use_only_user_songs"]
 
     gradual_increase = False
@@ -156,7 +156,7 @@ def generate_constrained_playlist(user_query):
     else:
         bpm_start, bpm_end = 60, 130  
 
-    print(f"🎵 Generating a {duration}-minute playlist | BPM {bpm_start} → {bpm_end} | Genres: {genres} | Years: {release_year_range}")
+    print(f"🎵 Generating a {duration}-minute playlist | BPM {bpm_start} → {bpm_end} | Genres: {genres} | Years: {release_year_range} | Mood: {mood_constraints}")
 
     avg_song_length = 4  
     num_songs = max(5, round(duration / avg_song_length))  
@@ -164,22 +164,27 @@ def generate_constrained_playlist(user_query):
     bpm_step = (bpm_end - bpm_start) / max(1, num_songs - 1) if gradual_increase else 0
 
     user_data = get_user_preferences()
-    liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]} 
-    user_songs = []
+    liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]}
 
+    user_songs = []
     if any(term in user_query.lower() for term in ["liked songs", "my favorites", "favorite", "favourites"]):
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
 
     elif "top tracks" in user_query.lower():
         user_songs = user_data["top_tracks"]
 
+    def matches_mood(song_mood):
+        if not mood_constraints or not song_mood:
+            return True  
+        return any(mood in song_mood.lower() for mood in mood_constraints)
+
     if use_only_user_songs:
         if user_songs:
-            filtered_songs = user_songs 
+            filtered_songs = [song for song in user_songs if matches_mood(song.get("mood", ""))]
             if genres and "any" not in genres:
-                filtered_songs = [song for song in user_songs if any(genre in genres for genre in user_data["top_genres"])]
+                filtered_songs = [song for song in filtered_songs if any(genre in genres for genre in user_data["top_genres"])]
 
-            playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in filtered_songs[:num_songs]]
+            playlist = [{"title": song["name"], "artist": song["artist"], "liked": True, "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
 
             print(f"✅ Returning ONLY user songs ({len(playlist)}/{num_songs} requested)")
             return {"playlist": playlist}
@@ -188,9 +193,57 @@ def generate_constrained_playlist(user_query):
             return {"error": "You requested only your songs, but no matching songs were found."}
 
     if user_songs:
-        playlist = [{"title": song["name"], "artist": song["artist"], "liked": True} for song in user_songs[:num_songs]]
+        filtered_songs = [song for song in user_songs if matches_mood(song.get("mood", ""))]
+        playlist = [{"title": song["name"], "artist": song["artist"], "liked": True, "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
         print(f"✅ Using user songs ({len(playlist)}/{num_songs} requested)")
     else:
-        pass
+        prompt = f"""
+        Generate a playlist with the following constraints:
+        - Genres: {genres}
+        - BPM range: {bpm_start} to {bpm_end} ({'gradual increase' if gradual_increase else 'fixed range'})
+        - Release years: {release_year_range[0]} to {release_year_range[1]}
+        - Mood constraints: {mood_constraints}
+        - **Duration:** {duration} min (~{num_songs} songs)
+
+        🎬 **Ensure BPM follows the correct order if gradual increase is requested.**
+
+        Respond in JSON format:
+        [
+            {{"title": "REAL SONG", "artist": "REAL ARTIST", "bpm": {bpm_start}, "release_year": {release_year_range[0]}, "mood": "matching mood"}},
+            ...
+        ]
+        """
+
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "system", "content": "You are a music expert AI that generates playlists."},
+                          {"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+
+            raw_content = response.choices[0].message.content
+            print("🔍 OpenAI Raw Response:", raw_content)
+
+            json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
+            if json_part:
+                playlist = json.loads(json_part.group(0))
+
+                if gradual_increase:
+                    playlist = sorted(playlist, key=lambda x: x["bpm"])
+
+                for song in playlist:
+                    song["liked"] = (song["title"].lower(), song["artist"].lower()) in liked_songs_set
+
+                playlist = playlist[:num_songs]
+                print(f"✅ Using AI-generated songs ({len(playlist)}/{num_songs} requested)")
+
+            else:
+                print("No valid JSON found in OpenAI response")
+                return {"error": "Failed to generate playlist"}
+
+        except Exception as e:
+            print("OpenAI API Error:", str(e))
+            return {"error": "Failed to generate playlist"}
 
     return {"playlist": playlist}
