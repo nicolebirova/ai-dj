@@ -41,6 +41,22 @@ def get_user_preferences():
         "liked_songs": liked_track_names
     }
 
+# Helper Function
+def song_matches_genre(song, target_genres):
+    artist_name = song["artist"]
+    try:
+        sp = spotipy.Spotify(auth_manager=sp_oauth)
+        results = sp.search(q=f"artist:{artist_name}", type="artist", limit=1)
+        if results["artists"]["items"]:
+            artist_info = results["artists"]["items"][0]
+            artist_genres = artist_info.get("genres", [])
+            for tg in target_genres:
+                if any(tg.lower() in ag.lower() for ag in artist_genres):
+                    return True
+        return False
+    except Exception as e:
+        return False
+
 # Song Metadata (BPM, Mood)
 def get_song_metadata(track_name, artist_name):
     query_url = f"https://acousticbrainz.org/api/v1/{track_name} - {artist_name}/low-level"
@@ -233,89 +249,23 @@ def generate_constrained_playlist(user_query, debug=False):
     user_data = get_user_preferences()
     liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]}
 
-    user_songs = []
-    if any(term in user_query.lower() for term in ["liked songs", "my favorites", "favorite", "favourites"]):
-        user_songs = user_data["liked_songs"] + user_data["top_tracks"]
-        if debug:
-            reasoning.append("User songs combined from liked songs and top tracks based on query.")
-    elif "top tracks" in user_query.lower():
-        user_songs = user_data["top_tracks"]
-        if debug:
-            reasoning.append("Using user top tracks based on query.")
+    user_songs = user_data["liked_songs"] + user_data["top_tracks"]
 
     def matches_mood(song_mood):
         if not mood_constraints or not song_mood:
             return True  
-        return any(mood in song_mood.lower() for mood in mood_constraints)
+        return any(mood.lower() in song_mood.lower() for mood in mood_constraints)
 
-    if use_only_user_songs:
-        if user_songs:
-            filtered_songs = [song for song in user_songs if matches_mood(song.get("mood", ""))]
-            if genres and "any" not in genres:
-                filtered_songs = [song for song in filtered_songs if any(genre in genres for genre in user_data["top_genres"])]
-            playlist = [{"title": song["name"], "artist": song["artist"], "liked": True, "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
-            if debug:
-                reasoning.append(f"Returning ONLY user songs: {len(playlist)} songs selected.")
-            return {"playlist": playlist, "reasoning": reasoning} if debug else {"playlist": playlist}
-        else:
-            if debug:
-                reasoning.append("No matching user songs found for 'only user songs' request.")
-            return {"error": "You requested only your songs, but no matching songs were found.", "reasoning": reasoning} if debug else {"error": "You requested only your songs, but no matching songs were found."}
-
-    if user_songs:
-        filtered_songs = [song for song in user_songs if matches_mood(song.get("mood", ""))]
-        playlist = [{"title": song["name"], "artist": song["artist"], "liked": True, "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
+    filtered_songs = [song for song in user_songs if matches_mood(song.get("mood", ""))]
+    
+    if genres and "any" not in genres:
+        filtered_songs = [song for song in filtered_songs if song_matches_genre(song, genres)]
         if debug:
-            reasoning.append(f"Using user songs: {len(playlist)} songs selected based on mood filtering.")
-    else:
-        prompt = f"""
-        Generate a playlist with the following constraints:
-        - Genres: {genres}
-        - BPM range: {bpm_start} to {bpm_end} ({'gradual increase' if gradual_increase else 'fixed range'})
-        - Release years: {release_year_range[0]} to {release_year_range[1]}
-        - Mood constraints: {mood_constraints}
-        - **Duration:** {duration} min (~{num_songs} songs)
+            reasoning.append(f"After genre filtering, {len(filtered_songs)} songs remain.")
 
-        🎬 **Ensure BPM follows the correct order if gradual increase is requested.**
-
-        Respond in JSON format:
-        [
-            {{"title": "REAL SONG", "artist": "REAL ARTIST", "bpm": {bpm_start}, "release_year": {release_year_range[0]}, "mood": "matching mood"}},
-            ...
-        ]
-        """
-        if debug:
-            reasoning.append("No user songs found; generating playlist using OpenAI with provided constraints.")
-        try:
-            response = openai.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "system", "content": "You are a music expert AI that generates playlists."},
-                          {"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            raw_content = response.choices[0].message.content
-            if debug:
-                reasoning.append(f"OpenAI generated response: {raw_content}")
-            json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
-            if json_part:
-                playlist = json.loads(json_part.group(0))
-                if gradual_increase:
-                    playlist = sorted(playlist, key=lambda x: x["bpm"])
-                    if debug:
-                        reasoning.append("Sorted AI-generated playlist for gradual BPM increase.")
-                for song in playlist:
-                    song["liked"] = (song["title"].lower(), song["artist"].lower()) in liked_songs_set
-                playlist = playlist[:num_songs]
-                if debug:
-                    reasoning.append(f"Using AI-generated songs: {len(playlist)} songs selected.")
-            else:
-                if debug:
-                    reasoning.append("No valid JSON found in OpenAI response.")
-                return {"error": "Failed to generate playlist", "reasoning": reasoning} if debug else {"error": "Failed to generate playlist"}
-        except Exception as e:
-            if debug:
-                reasoning.append(f"OpenAI API Error: {str(e)}")
-            return {"error": "Failed to generate playlist", "reasoning": reasoning} if debug else {"error": "Failed to generate playlist"}
+    playlist = [{"title": song["name"], "artist": song["artist"], "liked": True, "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
+    if debug:
+        reasoning.append(f"Returning ONLY user songs: {len(playlist)} songs selected.")
 
     if debug:
         validation_log = validate_playlist(playlist, constraints, debug=debug)
