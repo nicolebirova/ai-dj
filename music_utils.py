@@ -247,8 +247,6 @@ def generate_constrained_playlist(user_query, debug=False):
     bpm_step = (bpm_end - bpm_start) / max(1, num_songs - 1) if gradual_increase else 0
 
     user_data = get_user_preferences()
-    liked_songs_set = {(song["name"].lower(), song["artist"].lower()) for song in user_data["liked_songs"]}
-
     user_songs = user_data["liked_songs"] + user_data["top_tracks"]
 
     def matches_mood(song_mood):
@@ -261,11 +259,55 @@ def generate_constrained_playlist(user_query, debug=False):
     if genres and "any" not in genres:
         filtered_songs = [song for song in filtered_songs if song_matches_genre(song, genres)]
         if debug:
-            reasoning.append(f"After genre filtering, {len(filtered_songs)} songs remain.")
+            reasoning.append(f"After genre filtering, {len(filtered_songs)} user songs remain.")
 
-    playlist = [{"title": song["name"], "artist": song["artist"], "liked": True, "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
+    if not use_only_user_songs and len(filtered_songs) < num_songs:
+        needed = num_songs - len(filtered_songs)
+        if debug:
+            reasoning.append(f"User songs are insufficient ({len(filtered_songs)} available). Generating {needed} additional songs using AI.")
+        prompt = f"""
+        Generate a playlist with the following constraints:
+        - Genre: {genres}
+        - BPM range: {bpm_start} to {bpm_end}
+        - Release years: {release_year_range[0]} to {release_year_range[1]}
+        - Mood constraints: {mood_constraints}
+        - **Duration:** {needed * avg_song_length} minutes (approximately {needed} songs)
+        
+        Respond in JSON format as a list of objects, each with keys "title", "artist", "bpm", and "release_year".
+        """
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a music expert AI that generates playlists."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7
+            )
+            raw_content = response.choices[0].message.content
+            if debug:
+                reasoning.append(f"AI-generated response: {raw_content}")
+            json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
+            if json_part:
+                ai_songs = json.loads(json_part.group(0))
+                for song in ai_songs:
+                    song["liked"] = False
+                filtered_songs = filtered_songs + ai_songs
+                if debug:
+                    reasoning.append(f"Combined playlist now has {len(filtered_songs)} songs after AI supplementation.")
+            else:
+                if debug:
+                    reasoning.append("No valid JSON found in AI response; skipping AI supplementation.")
+        except Exception as e:
+            if debug:
+                reasoning.append(f"OpenAI API Error during AI supplementation: {str(e)}")
+
+    playlist = [{"title": song["name"] if "name" in song else song["title"],
+                 "artist": song["artist"],
+                 "liked": song.get("liked", False),
+                 "mood": song.get("mood", "Unknown")} for song in filtered_songs[:num_songs]]
     if debug:
-        reasoning.append(f"Returning ONLY user songs: {len(playlist)} songs selected.")
+        reasoning.append(f"Final playlist constructed with {len(playlist)} songs.")
 
     if debug:
         validation_log = validate_playlist(playlist, constraints, debug=debug)
