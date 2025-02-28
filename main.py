@@ -1,7 +1,6 @@
 ################################################
 ## This file contains the FastAPI Application ##
 ################################################
-
 import os
 import openai
 import spotipy
@@ -29,7 +28,6 @@ sp_oauth = SpotifyOAuth(
 
 app = FastAPI()
 
-# Authentication & User Preferences
 @app.get("/")
 def home():
     return {"message": "Welcome to AI DJ! Please log in to Spotify."}
@@ -49,13 +47,14 @@ def callback(request: Request):
 def get_user_data():
     return get_user_preferences()
 
-# AI-Based Playlist Generation
 @app.get("/generate_playlist")
-def generate_personalized_playlist(user_query: str = Query(..., description="Describe your playlist request")):
-    playlist = generate_constrained_playlist(user_query)
-    return playlist
+def generate_personalized_playlist(
+    user_query: str = Query(..., description="Describe your playlist request"),
+    debug: bool = Query(False, description="Enable debug mode to show chain-of-thought reasoning")
+):
+    result = generate_constrained_playlist(user_query, debug=debug)
+    return result
 
-# Save Playlist to Spotify
 @app.get("/save_playlist")
 def save_playlist(playlist_name: str, track_uris: list):
     sp = spotipy.Spotify(auth_manager=sp_oauth)
@@ -63,3 +62,4 @@ def save_playlist(playlist_name: str, track_uris: list):
     playlist = sp.user_playlist_create(user_id, playlist_name, public=True)
     sp.playlist_add_items(playlist["id"], track_uris)
     return {"message": f"Playlist '{playlist_name}' created!", "url": playlist["external_urls"]["spotify"]}
+

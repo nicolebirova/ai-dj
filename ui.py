@@ -29,32 +29,25 @@ for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "pla
 
 if not st.session_state.authenticated:
     st.title("🎵 Welcome to Your AI DJ! 🎶")
-
     auth_url = sp_oauth.get_authorize_url()
-
     st.markdown(
         f'<a href="{auth_url}">'
         '<button style="background-color:#1DB954;color:white;padding:10px 20px;'
         'border:none;border-radius:5px;cursor:pointer;font-size:16px;">Login to Spotify</button></a>',
         unsafe_allow_html=True
     )
-
     st.subheader("Paste the redirected URL here:")
     redirected_url = st.text_input("Enter the URL after login:")
-
     if st.button("Authenticate"):
         if "code=" in redirected_url:
             try:
                 code = redirected_url.split("code=")[-1].split("&")[0]
                 token_info = sp_oauth.get_access_token(code)
-
                 st.session_state.token_info = token_info
                 st.session_state.authenticated = True
                 st.session_state.user_switched = True
-
                 sp = spotipy.Spotify(auth=token_info["access_token"])
                 st.session_state.user_info = sp.current_user()
-
                 st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
                 st.rerun()  # Refresh UI
             except Exception as e:
@@ -65,14 +58,11 @@ if not st.session_state.authenticated:
 if st.session_state.authenticated:
     sp = spotipy.Spotify(auth=st.session_state.token_info["access_token"])
     st.session_state.user_info = sp.current_user()
-
     st.sidebar.header("🎶 Your Favorites 🎧")
-
     if not st.session_state.favorites_loaded or st.session_state.user_switched:
         top_artists = sp.current_user_top_artists(limit=5)["items"]
         top_tracks = sp.current_user_top_tracks(limit=5)["items"]
         top_genres = list(set(genre for artist in top_artists for genre in artist["genres"]))
-
         st.session_state.favorites = {
             "top_artists": [artist["name"] for artist in top_artists],
             "top_tracks": [f"{track['name']} - {track['artists'][0]['name']}" for track in top_tracks],
@@ -80,12 +70,10 @@ if st.session_state.authenticated:
         }
         st.session_state.favorites_loaded = True
         st.session_state.user_switched = False  
-
     st.sidebar.subheader(f"Hello, {st.session_state.user_info['display_name']}! 👋")
     st.sidebar.write("🎤 **Top Artists:**")
     for artist in st.session_state.favorites["top_artists"]:
         st.sidebar.write(f"✅ {artist}")
-
     st.sidebar.write("🎶 **Favorite Genres:**", ", ".join(st.session_state.favorites["top_genres"]))
     st.sidebar.write("📀 **Top Songs:**")
     for track in st.session_state.favorites["top_tracks"]:
@@ -93,17 +81,18 @@ if st.session_state.authenticated:
 
     st.title("🎵 AI DJ - Generate Your Playlist")
     user_query = st.text_input("Enter your playlist request 🎶:", "")
-
+    
+    debug_mode = st.checkbox("Show Reasoning (Debugging)", value=False)
+    
     if st.button("Generate Playlist"):
         FASTAPI_URL = "https://ai-dj-o4qg.onrender.com"
-        response = requests.get(f"{FASTAPI_URL}/generate_playlist?user_query={user_query}")
-
+        response = requests.get(f"{FASTAPI_URL}/generate_playlist", params={"user_query": user_query, "debug": debug_mode})
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, dict) and "playlist" in data:
                 st.session_state.playlist = data["playlist"]
+                st.session_state.debug_info = data.get("reasoning", [])
                 st.session_state.album_covers = []
-
                 for song in st.session_state.playlist:
                     search_result = sp.search(q=f"{song['title']} {song['artist']}", type="track", limit=1)
                     if search_result["tracks"]["items"]:
@@ -112,7 +101,6 @@ if st.session_state.authenticated:
                         st.session_state.album_covers.append(album_cover)
                     else:
                         st.session_state.album_covers.append(None)
-
                 st.rerun()
         else:
             st.error("Error generating playlist. Check API connection.")
@@ -121,7 +109,6 @@ if st.session_state.authenticated and st.session_state.playlist:
     st.subheader("🎵 Generated Playlist")
     total_duration = len(st.session_state.playlist) * 4  
     st.write(f"**Total Duration:** {total_duration} minutes")
-
     for i, song in enumerate(st.session_state.playlist):
         with st.container():
             col1, col2 = st.columns([1, 4])
@@ -129,12 +116,14 @@ if st.session_state.authenticated and st.session_state.playlist:
                 st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_container_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
-                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})") ###hyperlink needs to be fixed 
+                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
 
+    if debug_mode and "debug_info" in st.session_state and st.session_state.debug_info:
+        with st.expander("Debugging Info - Chain-of-Thought Reasoning"):
+            for line in st.session_state.debug_info:
+                st.write(line)
     if st.button("Make a New Playlist Request"):
         st.session_state.playlist = None
         st.session_state.album_covers = []
+        st.session_state.debug_info = []
         st.rerun()
-
-    ### add save playlist button
-    ## add whether or not it is a liked song?
