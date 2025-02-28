@@ -89,16 +89,28 @@ def interpret_user_query(user_query, debug=False):
                 reasoning.append("Defaulting duration to 60 minutes as generic fallback.")
 
     genres, mood_constraints = [], []
+
     if "movie" in user_query.lower() or "soundtrack" in user_query.lower() or "cinematic" in user_query.lower():
         genres = ["orchestral", "cinematic", "electronic", "synthwave", "ambient"]
         mood_constraints = ["epic", "dramatic", "adventurous"]
         if debug:
-            reasoning.append("Query indicates cinematic theme; using genres and mood constraints for cinematic vibe.")
+            reasoning.append("Query indicates cinematic theme; using cinematic genres and mood constraints.")
     elif "relax" in user_query.lower() or "stress" in user_query.lower():
         genres = ["lofi", "chill", "ambient", "soft rock", "indie"]
         mood_constraints = ["calm", "peaceful", "soothing"]
         if debug:
-            reasoning.append("Query indicates relaxation; using genres and mood constraints for calming music.")
+            reasoning.append("Query indicates relaxation; using calming genres and mood constraints.")
+    else:
+        known_genres = ["bollywood", "hollywood", "disney", "pop", "rock", "hip hop", "rap", "jazz", "classical", "electronic", "edm", "country", "indie", "metal", "reggae", "r&b"]
+        detected_genre = None
+        for genre in known_genres:
+            if genre in user_query.lower():
+                detected_genre = genre
+                if debug:
+                    reasoning.append(f"Detected specific genre: {genre} in user query.")
+                break
+        if detected_genre:
+            genres = [detected_genre]
 
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "only my favorites", "only my top tracks", "only my favourite songs"]
@@ -159,6 +171,7 @@ def interpret_user_query(user_query, debug=False):
         return extracted_data, reasoning
     else:
         return extracted_data
+
 
 # Playlist Validation
 def validate_playlist(playlist, constraints, debug=False):
