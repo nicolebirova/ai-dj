@@ -1,7 +1,6 @@
 ##############################################################################
 ## This file contains helper functions (metadata, filtering, external APIs) ##
 ##############################################################################
-
 import spotipy
 import requests
 import openai
@@ -12,10 +11,8 @@ import pandas as pd
 from spotipy.oauth2 import SpotifyOAuth
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Spotify OAuth Setup
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
@@ -23,9 +20,11 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-# User Preferences
-def get_user_preferences():
-    sp = spotipy.Spotify(auth_manager=sp_oauth)
+def get_user_preferences(access_token=None):
+    if access_token:
+        sp = spotipy.Spotify(auth=access_token)
+    else:
+        sp = spotipy.Spotify(auth_manager=sp_oauth)
     top_artists = sp.current_user_top_artists(limit=10)["items"]
     artist_names = [artist["name"] for artist in top_artists]
     top_genres = list(set([genre for artist in top_artists for genre in artist["genres"]]))
@@ -33,7 +32,6 @@ def get_user_preferences():
     track_names = [{"name": track["name"], "artist": track["artists"][0]["name"]} for track in top_tracks]
     liked_songs = sp.current_user_saved_tracks(limit=10)["items"]
     liked_track_names = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs]
-
     return {
         "top_artists": artist_names,
         "top_genres": top_genres,
@@ -41,7 +39,7 @@ def get_user_preferences():
         "liked_songs": liked_track_names
     }
 
-# Helper Function
+# Helper Function 
 def song_matches_genre(song, target_genres):
     artist_name = song["artist"]
     try:
@@ -68,7 +66,6 @@ def get_song_metadata(track_name, artist_name):
         return {"bpm": bpm, "mood": mood}
     return {"bpm": "Unknown", "mood": "Unknown"}
 
-# Query Understanding with Chain-of-Thought Reasoning
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
 
@@ -188,8 +185,6 @@ def interpret_user_query(user_query, debug=False):
     else:
         return extracted_data
 
-
-# Playlist Validation
 def validate_playlist(playlist, constraints, debug=False):
     validation_log = [] if debug else None
     bpm_range = constraints.get("bpm_range", [60, 130])
@@ -207,7 +202,7 @@ def validate_playlist(playlist, constraints, debug=False):
                 validation_log.append(f"Song '{song['title']}' does not have BPM info; skipping BPM check.")
     return validation_log
 
-def generate_constrained_playlist(user_query, debug=False):
+def generate_constrained_playlist(user_query, access_token=None, debug=False):
     if debug:
         constraints, reasoning = interpret_user_query(user_query, debug=debug)
     else:
@@ -232,30 +227,30 @@ def generate_constrained_playlist(user_query, debug=False):
         if debug:
             reasoning.append(f"Using fixed BPM range: {bpm_start} to {bpm_end}.")
     else:
-        bpm_start, bpm_end = 60, 130  
+        bpm_start, bpm_end = 60, 130
         if debug:
             reasoning.append("Fallback to default BPM range: 60 to 130.")
 
     if debug:
         reasoning.append(f"Generating a {duration}-minute playlist with BPM progression from {bpm_start} to {bpm_end}, genres {genres}, release years {release_year_range}, and mood constraints {mood_constraints}.")
 
-    avg_song_length = 4  
+    avg_song_length = 4
     num_songs = max(5, round(duration / avg_song_length))
     if debug:
         reasoning.append(f"Calculated number of songs: {num_songs} (assuming average song length of {avg_song_length} minutes).")
 
     bpm_step = (bpm_end - bpm_start) / max(1, num_songs - 1) if gradual_increase else 0
 
-    user_data = get_user_preferences()
+    user_data = get_user_preferences(access_token=access_token)
     user_songs = user_data["liked_songs"] + user_data["top_tracks"]
 
     def matches_mood(song_mood):
         if not mood_constraints or not song_mood:
-            return True  
+            return True
         return any(mood.lower() in song_mood.lower() for mood in mood_constraints)
 
     filtered_songs = [song for song in user_songs if matches_mood(song.get("mood", ""))]
-    
+
     if genres and "any" not in genres:
         filtered_songs = [song for song in filtered_songs if song_matches_genre(song, genres)]
         if debug:

@@ -86,7 +86,10 @@ if st.session_state.authenticated:
     
     if st.button("Generate Playlist"):
         FASTAPI_URL = "https://ai-dj-o4qg.onrender.com"
-        response = requests.get(f"{FASTAPI_URL}/generate_playlist", params={"user_query": user_query, "debug": debug_mode})
+        # Pass the current user's access token along with the request.
+        access_token = st.session_state.token_info["access_token"]
+        response = requests.get(f"{FASTAPI_URL}/generate_playlist", 
+                                params={"user_query": user_query, "debug": debug_mode, "access_token": access_token})
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, dict) and "playlist" in data:
@@ -117,7 +120,6 @@ if st.session_state.authenticated and st.session_state.playlist:
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
                 st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
-
     if debug_mode and "debug_info" in st.session_state and st.session_state.debug_info:
         with st.expander("Debugging Info - Chain-of-Thought Reasoning"):
             for line in st.session_state.debug_info:
