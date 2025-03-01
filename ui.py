@@ -61,7 +61,7 @@ if st.session_state.authenticated:
     st.session_state.user_info = sp.current_user()
     st.sidebar.header("🎶 Your Favorites 🎧")
     if not st.session_state.favorites_loaded or st.session_state.user_switched:
-        top_artists = sp.current_user_top_artists(limit=5)["items"]
+        top_artists = sp.current_user_top_artists(limit=3)["items"]
         top_tracks = sp.current_user_top_tracks(limit=5)["items"]
         top_genres = list(set(genre for artist in top_artists for genre in artist["genres"]))
         st.session_state.favorites = {
