@@ -20,7 +20,8 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-ENABLE_SONG_EXPLANATION = False  # Set to True to get extra explanation per song.
+# OPTIONAL: Enable extra per-song explanation via OpenAI.
+ENABLE_SONG_EXPLANATION = False  # Set True to get an extra explanation per song.
 
 def explain_song_selection(song, constraints):
     prompt = f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' meets these constraints: BPM range {constraints.get('bpm_range')}, genres {constraints.get('genres')}, and release years {constraints.get('release_year_range')}."
@@ -71,10 +72,6 @@ def song_matches_genre(song, target_genres):
         return False
 
 def get_song_metadata(track_name, artist_name):
-    """
-    Retrieve BPM info from AcousticBrainz using URL-encoded queries.
-    If BPM is not available from the low-level endpoint, try the high-level endpoint.
-    """
     query = f"{track_name} - {artist_name}"
     query_encoded = quote(query)
     low_url = f"https://acousticbrainz.org/api/v1/{query_encoded}/low-level"
@@ -92,12 +89,6 @@ def get_song_metadata(track_name, artist_name):
     return {"bpm": bpm, "mood": "Unknown"}
 
 def get_reference_track_details(reference_track):
-    """
-    Look up the reference track on Last.fm.
-    If the input contains a 'by' clause (e.g. "Neon Moon by Brooks & Dunn"),
-    split it into track and artist, and use both in the search.
-    Returns a dict with keys "title" and "artist" or None if not found.
-    """
     if " by " in reference_track.lower():
         parts = re.split(r"\s+by\s+", reference_track, flags=re.IGNORECASE)
         track_name = parts[0].strip()
@@ -129,10 +120,6 @@ def get_reference_track_details(reference_track):
     return None
 
 def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5, debug=False):
-    """
-    Uses the Last.fm API (track.getSimilar) to retrieve similar tracks based on the reference track and artist.
-    If debug is True, prints the raw response.
-    """
     api_key = os.environ.get("LASTFM_API_KEY")
     url = "http://ws.audioscrobbler.com/2.0/"
     params = {
@@ -498,7 +485,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 reasoning.append(f"Assigned fallback BPM {fallback_bpm} to song '{song.get('title', 'unknown')}' because BPM was unknown.")
 
     if constraints.get("gradual_bpm"):
-        filtered_songs = sorted(filtered_songs, key=lambda s: s.get("bpm", int((bpm_start + bpm_end) / 2)))
+        filtered_songs = sorted(filtered_songs, key=lambda s: s.get("bpm", int((bpm_start+bpm_end)/2)))
         if debug:
             reasoning.append("Sorted songs by BPM for gradual progression.")
 
