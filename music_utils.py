@@ -241,7 +241,7 @@ def interpret_user_query(user_query, debug=False):
             break
 
     exclude_artist_flag = False
-    if "not his music" in user_query.lower() or "but are not his music" in user_query.lower() or "not her music" in user_query.lower() or "but are not her music" in user_query.lower() or "not their music" in user_query.lower() or "but are not their music" in user_query.lower():
+    if "not his music" in user_query.lower() or "but are not his music" in user_query.lower():
         exclude_artist_flag = True
 
     extracted_data = {
@@ -294,7 +294,6 @@ def interpret_user_query(user_query, debug=False):
             reasoning.append(f"Error calling OpenAI API: {e}. Using default constraints.")
         extracted_json = {}
 
-    # Ensure defaults if the API returned null for any keys.
     if extracted_json.get("duration_minutes") is None:
         extracted_json["duration_minutes"] = extracted_duration
     if extracted_json.get("bpm_range") is None:
@@ -317,7 +316,13 @@ def interpret_user_query(user_query, debug=False):
     extracted_json["concern_bpm"] = concern_bpm
     extracted_json["gradual_bpm"] = gradual_bpm
 
-    # If exclusion is flagged and a reference track was extracted, use the dynamic reference artist.
+    if not extracted_json.get("reference_track"):
+        m = re.search(r'sound like ([\w\s]+?)\s+but', user_query.lower())
+        if m:
+            extracted_json["reference_track"] = m.group(1).strip()
+            if debug:
+                reasoning.append(f"I extracted the reference track from the query using regex: {extracted_json['reference_track']}")
+    
     if exclude_artist_flag and extracted_json.get("reference_track"):
         ref_details = get_reference_track_details(extracted_json["reference_track"], debug)
         if ref_details and ref_details.get("artist"):
@@ -378,7 +383,7 @@ def validate_playlist(playlist, constraints, debug=False):
                 fallback_bpm = int((constraints["bpm_range"][0] + constraints["bpm_range"][1]) / 2)
                 msg += f"BPM information was missing; I assigned a fallback BPM of {fallback_bpm}. "
         else:
-            msg += ""
+            msg += "I did not perform BPM validation for this song. "
         if "source" in song and "reason" in song:
             msg += f"This song comes from the '{song['source']}' source because {song['reason']}. "
         else:
