@@ -119,11 +119,9 @@ if st.session_state.authenticated and st.session_state.playlist:
                 st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_container_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
-                # URL-encode the search query to avoid broken links due to spaces.
                 search_query = urllib.parse.quote(f"{song['title']} {song['artist']}")
                 st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{search_query})")
     
-    # ----- Save Playlist Section -----
     st.subheader("Save Your Playlist to Spotify")
     playlist_name = st.text_input("Enter a name for your playlist:")
     if st.button("Save Playlist"):
