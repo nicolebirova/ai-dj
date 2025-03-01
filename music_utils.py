@@ -19,12 +19,9 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-ENABLE_SONG_EXPLANATION = True
+ENABLE_SONG_EXPLANATION = False  # Set to True to get an extra explanation per song.
 
 def explain_song_selection(song, constraints):
-    """
-    Optionally ask OpenAI to explain why a given song meets the constraints.
-    """
     prompt = f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' meets these constraints: BPM range {constraints.get('bpm_range')}, genres {constraints.get('genres')}, and release years {constraints.get('release_year_range')}."
     try:
         response = openai.chat.completions.create(
@@ -34,8 +31,7 @@ def explain_song_selection(song, constraints):
             temperature=0.5,
             max_tokens=60
         )
-        explanation = response.choices[0].message.content.strip()
-        return explanation
+        return response.choices[0].message.content.strip()
     except Exception as e:
         return "No explanation available."
 
@@ -215,6 +211,13 @@ def interpret_user_query(user_query, debug=False):
     if debug and not genres:
         reasoning.append("No specific genre detected; defaulting to 'any'.")
 
+    concern_bpm = bool(re.search(r"\bBPM\b", user_query, re.IGNORECASE))
+    if debug:
+        if concern_bpm:
+            reasoning.append("User query mentions BPM; BPM will be validated.")
+        else:
+            reasoning.append("User query does not mention BPM; skipping BPM validation in logs.")
+    
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
     )
@@ -274,6 +277,7 @@ def interpret_user_query(user_query, debug=False):
     extracted_data.setdefault("use_only_user_songs", use_only_user_songs)
     extracted_data.setdefault("explicit_song_count", None)
     extracted_data.setdefault("reference_track", None)
+    extracted_data["concern_bpm"] = concern_bpm
 
     if debug:
         reasoning.append(f"Final extracted constraints: {extracted_data}")
@@ -295,17 +299,21 @@ def validate_playlist(playlist, constraints, debug=False):
     header += f"Genres: {constraints.get('genres')}\n"
     header += f"Mood Constraints: {constraints.get('mood_constraints')}\n"
     header += f"Personal songs only: {constraints.get('use_only_user_songs')}\n"
+    header += f"BPM validation required: {constraints.get('concern_bpm')}\n"
     validation_log.append(header)
     for song in playlist:
         msg = f"Song '{song['title']}' by {song['artist']}: "
-        if "bpm" in song and song["bpm"] != "Unknown":
-            bpm = song["bpm"]
-            if constraints.get("bpm_range") and constraints["bpm_range"][0] <= bpm <= constraints["bpm_range"][1]:
-                msg += f"BPM {bpm} is within the required range {constraints['bpm_range']}. "
+        if constraints.get("concern_bpm"):
+            if "bpm" in song and song["bpm"] != "Unknown":
+                bpm = song["bpm"]
+                if constraints.get("bpm_range") and constraints["bpm_range"][0] <= bpm <= constraints["bpm_range"][1]:
+                    msg += f"BPM {bpm} is within the required range {constraints['bpm_range']}. "
+                else:
+                    msg += f"BPM {bpm} is outside the required range {constraints['bpm_range']}. "
             else:
-                msg += f"BPM {bpm} is outside the required range {constraints['bpm_range']}. "
+                msg += "BPM info is not available; skipping BPM check. "
         else:
-            msg += "BPM info is not available; cannot validate BPM. "
+            msg += "BPM validation not required. "
         if "source" in song and "reason" in song:
             msg += f"Source: {song['source']}. Reason: {song['reason']}. "
         else:
