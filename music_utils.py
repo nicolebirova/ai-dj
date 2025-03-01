@@ -20,8 +20,7 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-# OPTIONAL: Enable extra per-song explanation via OpenAI.
-ENABLE_SONG_EXPLANATION = False  # Set True to get an extra explanation per song.
+ENABLE_SONG_EXPLANATION = False  # Set True to get extra explanation per song.
 
 def explain_song_selection(song, constraints):
     prompt = f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' meets these constraints: BPM range {constraints.get('bpm_range')}, genres {constraints.get('genres')}, and release years {constraints.get('release_year_range')}."
@@ -226,6 +225,10 @@ def interpret_user_query(user_query, debug=False):
         if debug:
             reasoning.append("Query indicates a gradual BPM progression.")
 
+    exclude_artist = None
+    if "not his music" in user_query.lower() or "but are not his music" in user_query.lower():
+        if "reference_track" in user_query.lower():
+            exclude_artist = user_query.split("not his music")[0].strip()
     extracted_data = {
         "explicit_song_count": None,
         "duration_minutes": extracted_duration,
@@ -236,7 +239,8 @@ def interpret_user_query(user_query, debug=False):
         "use_only_user_songs": use_only_user_songs,
         "reference_track": None,
         "concern_bpm": concern_bpm,
-        "gradual_bpm": gradual_bpm
+        "gradual_bpm": gradual_bpm,
+        "exclude_artist": None
     }
     prompt = f"""
     Extract structured playlist constraints from the following user request:
@@ -254,7 +258,7 @@ def interpret_user_query(user_query, debug=False):
       "reference_track": <string or null>
     }}
     
-    If the query explicitly states a number of songs (e.g., "give me 4 songs..."), set "explicit_song_count" to that number; otherwise, set it to null.
+    If the query explicitly states a number of songs (e.g., "give me 7 songs..."), set "explicit_song_count" to that number; otherwise, set it to null.
     If the query references a specific song (e.g., "like Halloween by Novo Amor"), set "reference_track" to that song's title; otherwise, set it to null.
     """
     if debug:
@@ -290,6 +294,10 @@ def interpret_user_query(user_query, debug=False):
     extracted_json.setdefault("reference_track", None)
     extracted_json["concern_bpm"] = concern_bpm
     extracted_json["gradual_bpm"] = gradual_bpm
+    if ("not his music" in user_query.lower() or "but are not his music" in user_query.lower()) and extracted_json.get("reference_track"):
+        extracted_json["exclude_artist"] = extracted_json["reference_track"].strip().lower()
+    else:
+        extracted_json["exclude_artist"] = None
 
     if debug:
         reasoning.append(f"Final extracted constraints: {extracted_json}")
@@ -313,6 +321,8 @@ def validate_playlist(playlist, constraints, debug=False):
     header += f"Personal songs only: {constraints.get('use_only_user_songs')}\n"
     header += f"BPM validation required: {constraints.get('concern_bpm')}\n"
     header += f"Gradual BPM progression: {constraints.get('gradual_bpm')}\n"
+    if constraints.get("exclude_artist"):
+        header += f"Excluding songs by: {constraints.get('exclude_artist')}\n"
     validation_log.append(header)
     for i, song in enumerate(playlist):
         msg = f"Song '{song['title']}' by {song['artist']}: "
@@ -431,6 +441,13 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 if debug:
                     reasoning.append("No recommendations returned from Last.fm; falling back to AI generation.")
     
+    if constraints.get("exclude_artist"):
+        exclude = constraints["exclude_artist"].strip().lower()
+        before = len(filtered_songs)
+        filtered_songs = [song for song in filtered_songs if song["artist"].strip().lower() != exclude]
+        if debug:
+            reasoning.append(f"Filtered out {before - len(filtered_songs)} song(s) by excluded artist '{exclude}'.")
+
     needed = num_songs - len(filtered_songs)
     if needed > 0:
         reference_line = ""
