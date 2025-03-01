@@ -64,9 +64,37 @@ def get_song_metadata(track_name, artist_name):
         return {"bpm": bpm, "mood": mood}
     return {"bpm": "Unknown", "mood": "Unknown"}
 
+def get_reference_track_details(reference_track):
+    """
+    Uses Last.fm's track.search endpoint to find the reference track details.
+    Returns a dict with keys "title" and "artist" or None if not found.
+    """
+    api_key = os.environ.get("LASTFM_API_KEY")
+    url = "http://ws.audioscrobbler.com/2.0/"
+    params = {
+         "method": "track.search",
+         "track": reference_track,
+         "api_key": api_key,
+         "format": "json",
+         "limit": 1
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+         data = response.json()
+         tracks = data.get("results", {}).get("trackmatches", {}).get("track", [])
+         if tracks:
+             # tracks may be a list or a dict if only one result
+             best = tracks[0] if isinstance(tracks, list) else tracks
+             return {
+                 "title": best.get("name"),
+                 "artist": best.get("artist")
+             }
+    return None
+
 def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
     """
-    Uses the Last.fm API to retrieve similar tracks given a reference track and artist.
+    Uses the Last.fm API (track.getSimilar) to retrieve similar tracks
+    based on the reference track and artist.
     """
     api_key = os.environ.get("LASTFM_API_KEY")
     url = "http://ws.audioscrobbler.com/2.0/"
@@ -98,6 +126,7 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
 
+    # Try to extract duration from query.
     duration_match = re.search(r"(\d+(\.\d+)?)\s*(hour|hr|min|minutes)", user_query, re.IGNORECASE)
     extracted_duration = None
     if duration_match:
@@ -131,7 +160,6 @@ def interpret_user_query(user_query, debug=False):
                 reasoning.append("Defaulting duration to 60 minutes as generic fallback.")
 
     genres, mood_constraints = [], []
-
     if "movie" in user_query.lower() or "soundtrack" in user_query.lower() or "cinematic" in user_query.lower():
         genres = ["orchestral", "cinematic", "electronic", "synthwave", "ambient"]
         mood_constraints = ["epic", "dramatic", "adventurous"]
@@ -154,6 +182,7 @@ def interpret_user_query(user_query, debug=False):
         if detected_genre:
             genres = [detected_genre]
 
+    # Check if the query explicitly requests personal songs.
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
     )
@@ -163,6 +192,7 @@ def interpret_user_query(user_query, debug=False):
         else:
             reasoning.append("User did not request to exclusively use personal songs.")
 
+    # Build prompt for AI extraction.
     prompt = f"""
     Extract structured playlist constraints from the following user request:
     "{user_query}"
@@ -252,13 +282,14 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         constraints = interpret_user_query(user_query, debug=debug)
         reasoning = None
 
+    # Determine number of songs to generate.
     if constraints.get("explicit_song_count") is not None:
         num_songs = int(constraints["explicit_song_count"])
         if debug:
             reasoning.append(f"Using explicit song count: {num_songs}")
     else:
         duration = constraints["duration_minutes"]
-        avg_song_length = 4  
+        avg_song_length = 4
         num_songs = max(5, round(duration / avg_song_length))
         if debug:
             reasoning.append(f"Calculated number of songs: {num_songs} based on duration {duration} minutes.")
@@ -275,6 +306,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     else:
         bpm_start, bpm_end = 60, 130
 
+    # Only use personal library songs if explicitly requested.
     if use_only_user_songs:
         user_data = get_user_preferences(access_token=access_token)
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
@@ -284,27 +316,27 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             reasoning.append(f"Using personal library exclusively; {len(filtered_songs)} songs after filtering.")
     else:
         filtered_songs = []
-        user_data = get_user_preferences(access_token=access_token)
-        if user_data:
-            user_songs = user_data["liked_songs"] + user_data["top_tracks"]
-            filtered_user_songs = [song for song in user_songs if matches_mood(song.get("mood", ""), mood_constraints)
-                                   and (("any" in genres) or song_matches_genre(song, genres))]
-            num_user_songs = min(len(filtered_user_songs), max(1, num_songs // 5))
-            filtered_songs = filtered_user_songs[:num_user_songs]
-            if debug:
-                reasoning.append(f"Using {num_user_songs} songs from personal library out of {len(filtered_user_songs)} available.")
 
+    # If a reference track is provided, look it up and fetch similar tracks via Last.fm.
     if reference_track:
-        if reference_track.lower().strip() == "the sound of silence":
-            reference_artist = "Simon & Garfunkel"
+        ref_details = get_reference_track_details(reference_track)
+        if ref_details is not None:
+            reference_track_name = ref_details.get("title")
+            reference_artist = ref_details.get("artist")
+            if debug:
+                reasoning.append(f"Found reference track details: {reference_track_name} by {reference_artist}")
         else:
-            reference_artist = "Unknown"  
-        external_recs = get_similar_tracks_lastfm(reference_track, reference_artist, limit=num_songs)
+            reference_track_name = reference_track
+            reference_artist = "Unknown"
+            if debug:
+                reasoning.append("Could not find reference track details; using provided text.")
+        external_recs = get_similar_tracks_lastfm(reference_track_name, reference_artist, limit=num_songs)
         if external_recs:
             filtered_songs += external_recs
             if debug:
                 reasoning.append(f"Retrieved {len(external_recs)} recommendations from Last.fm based on reference track.")
 
+    # Supplement with AI-generated songs if necessary.
     needed = num_songs - len(filtered_songs)
     if needed > 0:
         reference_line = ""
@@ -346,6 +378,16 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             if debug:
                 reasoning.append(f"OpenAI API Error during AI supplementation: {str(e)}")
 
+    # After gathering external recommendations, check if any appear in the user's library.
+    user_data = get_user_preferences(access_token=access_token)
+    personal_tracks = {(song["name"].strip().lower(), song["artist"].strip().lower()) 
+                       for song in user_data["liked_songs"] + user_data["top_tracks"]}
+    for song in filtered_songs:
+        key = (song.get("title", "").strip().lower(), song.get("artist", "").strip().lower())
+        if key in personal_tracks:
+            song["liked"] = True
+
+    # Finalize the playlist.
     playlist = [{"title": song.get("name", song.get("title")),
                  "artist": song["artist"],
                  "liked": song.get("liked", False),
