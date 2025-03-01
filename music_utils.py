@@ -67,6 +67,7 @@ def get_song_metadata(track_name, artist_name):
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
 
+    # First try to extract a duration if present.
     duration_match = re.search(r"(\d+(\.\d+)?)\s*(hour|hr|min|minutes)", user_query, re.IGNORECASE)
     extracted_duration = None
     if duration_match:
@@ -123,6 +124,7 @@ def interpret_user_query(user_query, debug=False):
         if detected_genre:
             genres = [detected_genre]
 
+    # Check if the query explicitly requests using personal songs
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
     )
@@ -132,19 +134,25 @@ def interpret_user_query(user_query, debug=False):
         else:
             reasoning.append("User did not request to exclusively use personal songs.")
 
+    # Build prompt for AI extraction with explicit song count and reference track.
     prompt = f"""
     Extract structured playlist constraints from the following user request:
     "{user_query}"
 
-    Response must be valid JSON:
+    Response must be valid JSON with the following keys:
     {{
+      "explicit_song_count": <number or null>, 
       "duration_minutes": {extracted_duration if extracted_duration else 60},
       "bpm_range": [60, 130],
       "genres": {genres if genres else '["any"]'},
       "release_year_range": [2019, 2024],
       "mood_constraints": {mood_constraints if mood_constraints else '[]'},
-      "use_only_user_songs": {str(use_only_user_songs).lower()}
+      "use_only_user_songs": {str(use_only_user_songs).lower()},
+      "reference_track": <string or null>
     }}
+
+    If the query explicitly states a number of songs (e.g., "give me 5 songs..."), set "explicit_song_count" to that number; otherwise, set it to null.
+    If the query references a specific song (e.g., "like the sound of silence"), set "reference_track" to that song's title; otherwise, set it to null.
     """
     if debug:
         reasoning.append("Constructed prompt for OpenAI API for extracting constraints.")
@@ -170,6 +178,7 @@ def interpret_user_query(user_query, debug=False):
             reasoning.append(f"OpenAI API Error: {str(e)}. Falling back to defaults.")
         extracted_data = {}
 
+    # Ensure duration_minutes is not None
     if extracted_data.get("duration_minutes") is None:
         extracted_data["duration_minutes"] = extracted_duration if extracted_duration else 60
 
@@ -178,6 +187,8 @@ def interpret_user_query(user_query, debug=False):
     extracted_data.setdefault("release_year_range", [2019, 2024])
     extracted_data.setdefault("mood_constraints", mood_constraints if mood_constraints else [])
     extracted_data.setdefault("use_only_user_songs", use_only_user_songs)
+    extracted_data.setdefault("explicit_song_count", None)
+    extracted_data.setdefault("reference_track", None)
 
     if debug:
         reasoning.append(f"Final extracted constraints: {extracted_data}")
@@ -214,21 +225,31 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         constraints = interpret_user_query(user_query, debug=debug)
         reasoning = None
 
-    duration = constraints["duration_minutes"]
+    # Use explicit song count if provided; otherwise, use duration-based calculation.
+    if constraints.get("explicit_song_count") is not None:
+        num_songs = int(constraints["explicit_song_count"])
+        if debug:
+            reasoning.append(f"Using explicit song count: {num_songs}")
+    else:
+        duration = constraints["duration_minutes"]
+        avg_song_length = 4  # in minutes
+        num_songs = max(5, round(duration / avg_song_length))
+        if debug:
+            reasoning.append(f"Calculated number of songs: {num_songs} based on duration {duration} minutes.")
+
     bpm_range = constraints["bpm_range"]
     genres = constraints["genres"]
     release_year_range = constraints["release_year_range"]
     mood_constraints = constraints["mood_constraints"]
     use_only_user_songs = constraints.get("use_only_user_songs", False)
+    reference_track = constraints.get("reference_track", None)
 
     if isinstance(bpm_range, list) and len(bpm_range) == 2:
         bpm_start, bpm_end = bpm_range
     else:
         bpm_start, bpm_end = 60, 130
 
-    avg_song_length = 4  
-    num_songs = max(5, round(duration / avg_song_length))
-
+    # Decide whether to use personal library
     if use_only_user_songs:
         user_data = get_user_preferences(access_token=access_token)
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
@@ -237,6 +258,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         if debug:
             reasoning.append(f"Using personal library exclusively; {len(filtered_songs)} songs after filtering.")
     else:
+        # Retrieve personal songs but use only a small portion (e.g., up to 20% of total) if available.
         filtered_songs = []
         user_data = get_user_preferences(access_token=access_token)
         if user_data:
@@ -248,8 +270,11 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             if debug:
                 reasoning.append(f"Using {num_user_songs} songs from personal library out of {len(filtered_user_songs)} available.")
 
+    # Calculate how many additional songs are needed from AI generation
     needed = num_songs - len(filtered_songs)
     if needed > 0:
+        # If a reference track is provided, add it to the prompt to guide generation.
+        reference_line = f"Reference track: {reference_track}" if reference_track else ""
         prompt = f"""
         Generate a playlist with the following constraints:
         - Genre: {genres}
@@ -257,6 +282,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         - Release years: {release_year_range[0]} to {release_year_range[1]}
         - Mood constraints: {mood_constraints}
         - Number of songs: {needed}
+        {reference_line}
         
         Respond in JSON format as a list of objects, each with keys "title", "artist", "bpm", and "release_year".
         """
