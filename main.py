@@ -58,7 +58,7 @@ def generate_personalized_playlist(
 @app.get("/save_playlist")
 def save_playlist(
     playlist_name: str, 
-    track_uris: List[str], 
+    track_uris: List[str] = Query(...),
     access_token: str = Query(..., description="User's Spotify access token")
 ):
     sp = spotipy.Spotify(auth=access_token)
