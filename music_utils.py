@@ -74,7 +74,6 @@ def get_song_metadata(track_name, artist_name):
     """
     Retrieve BPM info from AcousticBrainz using URL-encoded queries.
     If BPM is not available from the low-level endpoint, try the high-level endpoint.
-    If still unknown, return "Unknown".
     """
     query = f"{track_name} - {artist_name}"
     query_encoded = quote(query)
@@ -353,7 +352,8 @@ def validate_playlist(playlist, constraints, debug=False):
                 else:
                     msg += f"BPM {bpm} is outside the required range {constraints['bpm_range']}. "
             else:
-                msg += "BPM info is not available; assigned fallback BPM " + str(int((constraints["bpm_range"][0] + constraints["bpm_range"][1]) / 2)) + ". "
+                fallback_bpm = int((constraints["bpm_range"][0] + constraints["bpm_range"][1]) / 2)
+                msg += f"BPM info is not available; assigned fallback BPM {fallback_bpm}. "
         else:
             msg += "BPM validation not required. "
         if "source" in song and "reason" in song:
@@ -496,7 +496,12 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             song["bpm"] = fallback_bpm
             if debug:
                 reasoning.append(f"Assigned fallback BPM {fallback_bpm} to song '{song.get('title', 'unknown')}' because BPM was unknown.")
-    
+
+    if constraints.get("gradual_bpm"):
+        filtered_songs = sorted(filtered_songs, key=lambda s: s.get("bpm", int((bpm_start + bpm_end) / 2)))
+        if debug:
+            reasoning.append("Sorted songs by BPM for gradual progression.")
+
     user_data = get_user_preferences(access_token=access_token)
     personal_tracks = {
         (song["name"].strip().lower(), song["artist"].strip().lower())
