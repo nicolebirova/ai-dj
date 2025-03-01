@@ -64,10 +64,33 @@ def get_song_metadata(track_name, artist_name):
         return {"bpm": bpm, "mood": mood}
     return {"bpm": "Unknown", "mood": "Unknown"}
 
+def get_spotify_recommendations(reference_track, access_token, limit=5):
+    """
+    Given a reference track title, search for it on Spotify and use it as a seed
+    to retrieve similar recommendations.
+    """
+    sp = spotipy.Spotify(auth=access_token)
+    results = sp.search(q=reference_track, type="track", limit=1)
+    if results["tracks"]["items"]:
+        track = results["tracks"]["items"][0]
+        track_id = track["id"]
+        recs = sp.recommendations(seed_tracks=[track_id], limit=limit)
+        recommended_tracks = []
+        for t in recs["tracks"]:
+            recommended_tracks.append({
+                "title": t["name"],
+                "artist": t["artists"][0]["name"],
+                "bpm": t.get("tempo", "Unknown"),
+                "release_year": t["album"]["release_date"][:4],
+                "liked": False,
+                "mood": "Unknown"  
+            })
+        return recommended_tracks
+    return []
+
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
 
-    # First try to extract a duration if present.
     duration_match = re.search(r"(\d+(\.\d+)?)\s*(hour|hr|min|minutes)", user_query, re.IGNORECASE)
     extracted_duration = None
     if duration_match:
@@ -124,7 +147,6 @@ def interpret_user_query(user_query, debug=False):
         if detected_genre:
             genres = [detected_genre]
 
-    # Check if the query explicitly requests using personal songs
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
     )
@@ -134,7 +156,6 @@ def interpret_user_query(user_query, debug=False):
         else:
             reasoning.append("User did not request to exclusively use personal songs.")
 
-    # Build prompt for AI extraction with explicit song count and reference track.
     prompt = f"""
     Extract structured playlist constraints from the following user request:
     "{user_query}"
@@ -178,7 +199,6 @@ def interpret_user_query(user_query, debug=False):
             reasoning.append(f"OpenAI API Error: {str(e)}. Falling back to defaults.")
         extracted_data = {}
 
-    # Ensure duration_minutes is not None
     if extracted_data.get("duration_minutes") is None:
         extracted_data["duration_minutes"] = extracted_duration if extracted_duration else 60
 
@@ -225,14 +245,13 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         constraints = interpret_user_query(user_query, debug=debug)
         reasoning = None
 
-    # Use explicit song count if provided; otherwise, use duration-based calculation.
     if constraints.get("explicit_song_count") is not None:
         num_songs = int(constraints["explicit_song_count"])
         if debug:
             reasoning.append(f"Using explicit song count: {num_songs}")
     else:
         duration = constraints["duration_minutes"]
-        avg_song_length = 4  # in minutes
+        avg_song_length = 4  
         num_songs = max(5, round(duration / avg_song_length))
         if debug:
             reasoning.append(f"Calculated number of songs: {num_songs} based on duration {duration} minutes.")
@@ -249,7 +268,6 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     else:
         bpm_start, bpm_end = 60, 130
 
-    # Decide whether to use personal library
     if use_only_user_songs:
         user_data = get_user_preferences(access_token=access_token)
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
@@ -258,7 +276,6 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         if debug:
             reasoning.append(f"Using personal library exclusively; {len(filtered_songs)} songs after filtering.")
     else:
-        # Retrieve personal songs but use only a small portion (e.g., up to 20% of total) if available.
         filtered_songs = []
         user_data = get_user_preferences(access_token=access_token)
         if user_data:
@@ -270,11 +287,18 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             if debug:
                 reasoning.append(f"Using {num_user_songs} songs from personal library out of {len(filtered_user_songs)} available.")
 
-    # Calculate how many additional songs are needed from AI generation
+    if reference_track:
+        external_recs = get_spotify_recommendations(reference_track, access_token, limit=num_songs)
+        if external_recs:
+            filtered_songs += external_recs
+            if debug:
+                reasoning.append(f"Retrieved {len(external_recs)} recommendations from Spotify based on reference track.")
+    
     needed = num_songs - len(filtered_songs)
     if needed > 0:
-        # If a reference track is provided, add it to the prompt to guide generation.
-        reference_line = f"Reference track: {reference_track}" if reference_track else ""
+        reference_line = ""
+        if reference_track:
+            reference_line = f"Reference track: {reference_track}. This track is known for its acoustic folk style, gentle vocals, introspective lyrics, and minimal production. Generate songs with similar characteristics."
         prompt = f"""
         Generate a playlist with the following constraints:
         - Genre: {genres}
