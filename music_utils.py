@@ -20,7 +20,6 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-# OPTIONAL: Enable extra per-song explanation via OpenAI.
 ENABLE_SONG_EXPLANATION = False  # Set to True to get extra explanation per song.
 
 def explain_song_selection(song, constraints):
@@ -232,7 +231,6 @@ def interpret_user_query(user_query, debug=False):
         if debug:
             reasoning.append("The query indicates a gradual BPM progression.")
 
-    # Instrument extraction: look for common instrument keywords.
     instrument_list = ["guitar", "piano", "violin", "drums", "saxophone", "flute", "bass", "cello", "trumpet", "harp", "ukulele", "mandolin"]
     detected_instrument = None
     for inst in instrument_list:
@@ -242,9 +240,8 @@ def interpret_user_query(user_query, debug=False):
                 reasoning.append(f"I detected the instrument '{inst}' in the query.")
             break
 
-    # Check for exclusion language (e.g., "not his music" or "but are not his music").
     exclude_artist_flag = False
-    if "not his music" in user_query.lower() or "but are not his music" in user_query.lower():
+    if "not his music" in user_query.lower() or "but are not his music" in user_query.lower() or "not her music" in user_query.lower() or "but are not her music" in user_query.lower() or "not their music" in user_query.lower() or "but are not their music" in user_query.lower():
         exclude_artist_flag = True
 
     extracted_data = {
@@ -381,7 +378,7 @@ def validate_playlist(playlist, constraints, debug=False):
                 fallback_bpm = int((constraints["bpm_range"][0] + constraints["bpm_range"][1]) / 2)
                 msg += f"BPM information was missing; I assigned a fallback BPM of {fallback_bpm}. "
         else:
-            msg += "I did not perform BPM validation for this song. "
+            msg += ""
         if "source" in song and "reason" in song:
             msg += f"This song comes from the '{song['source']}' source because {song['reason']}. "
         else:
