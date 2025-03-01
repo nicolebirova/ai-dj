@@ -7,6 +7,7 @@ import shutil
 import urllib.parse
 
 st.set_page_config(page_title="AI DJ - Playlist Generator", page_icon="🎵", layout="wide")
+FASTAPI_URL = "https://ai-dj-o4qg.onrender.com"
 
 SPOTIPY_CLIENT_ID = os.environ.get("SPOTIPY_CLIENT_ID")
 SPOTIPY_CLIENT_SECRET = os.environ.get("SPOTIPY_CLIENT_SECRET")
