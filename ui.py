@@ -4,6 +4,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
 import shutil
+import urllib.parse
 
 st.set_page_config(page_title="AI DJ - Playlist Generator", page_icon="🎵", layout="wide")
 
@@ -60,7 +61,7 @@ if st.session_state.authenticated:
     st.session_state.user_info = sp.current_user()
     st.sidebar.header("🎶 Your Favorites 🎧")
     if not st.session_state.favorites_loaded or st.session_state.user_switched:
-        top_artists = sp.current_user_top_artists(limit=3)["items"]
+        top_artists = sp.current_user_top_artists(limit=5)["items"]
         top_tracks = sp.current_user_top_tracks(limit=5)["items"]
         top_genres = list(set(genre for artist in top_artists for genre in artist["genres"]))
         st.session_state.favorites = {
@@ -118,7 +119,33 @@ if st.session_state.authenticated and st.session_state.playlist:
                 st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_container_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
-                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{song['title']} {song['artist']})")
+                # URL-encode the search query to avoid broken links due to spaces.
+                search_query = urllib.parse.quote(f"{song['title']} {song['artist']}")
+                st.markdown(f"[▶️ Listen on Spotify](https://open.spotify.com/search/{search_query})")
+    
+    # ----- Save Playlist Section -----
+    st.subheader("Save Your Playlist to Spotify")
+    playlist_name = st.text_input("Enter a name for your playlist:")
+    if st.button("Save Playlist"):
+        track_uris = []
+        for song in st.session_state.playlist:
+            query = f"{song['title']} {song['artist']}"
+            search_result = sp.search(q=query, type="track", limit=1)
+            if search_result["tracks"]["items"]:
+                track_uri = search_result["tracks"]["items"][0]["uri"]
+                track_uris.append(track_uri)
+        params = {
+            "playlist_name": playlist_name,
+            "track_uris": track_uris,
+            "access_token": st.session_state.token_info["access_token"]
+        }
+        response = requests.get(f"{FASTAPI_URL}/save_playlist", params=params)
+        if response.status_code == 200:
+            data = response.json()
+            st.success(f"Playlist '{playlist_name}' saved! You can view it here: {data.get('url')}")
+        else:
+            st.error("Error saving playlist. Please check your API connection.")
+    
     if debug_mode and "debug_info" in st.session_state and st.session_state.debug_info:
         with st.expander("Debugging Info - Chain-of-Thought Reasoning"):
             for line in st.session_state.debug_info:
