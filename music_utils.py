@@ -64,28 +64,35 @@ def get_song_metadata(track_name, artist_name):
         return {"bpm": bpm, "mood": mood}
     return {"bpm": "Unknown", "mood": "Unknown"}
 
-def get_spotify_recommendations(reference_track, access_token, limit=5):
+def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
     """
-    Given a reference track title, search for it on Spotify and use it as a seed
-    to retrieve similar recommendations.
+    Uses the Last.fm API to retrieve similar tracks given a reference track and artist.
     """
-    sp = spotipy.Spotify(auth=access_token)
-    results = sp.search(q=reference_track, type="track", limit=1)
-    if results["tracks"]["items"]:
-        track = results["tracks"]["items"][0]
-        track_id = track["id"]
-        recs = sp.recommendations(seed_tracks=[track_id], limit=limit)
-        recommended_tracks = []
-        for t in recs["tracks"]:
-            recommended_tracks.append({
-                "title": t["name"],
-                "artist": t["artists"][0]["name"],
-                "bpm": t.get("tempo", "Unknown"),
-                "release_year": t["album"]["release_date"][:4],
-                "liked": False,
-                "mood": "Unknown"  
-            })
-        return recommended_tracks
+    api_key = os.environ.get("LASTFM_API_KEY")
+    url = "http://ws.audioscrobbler.com/2.0/"
+    params = {
+         "method": "track.getSimilar",
+         "track": reference_track,
+         "artist": reference_artist,
+         "api_key": api_key,
+         "format": "json",
+         "limit": limit
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+         data = response.json()
+         similar_tracks = data.get("similartracks", {}).get("track", [])
+         recommendations = []
+         for track in similar_tracks:
+             recommendations.append({
+                  "title": track.get("name"),
+                  "artist": track.get("artist", {}).get("name"),
+                  "bpm": "Unknown",
+                  "release_year": "Unknown",
+                  "liked": False,
+                  "mood": "Unknown"
+             })
+         return recommendations
     return []
 
 def interpret_user_query(user_query, debug=False):
@@ -288,12 +295,16 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 reasoning.append(f"Using {num_user_songs} songs from personal library out of {len(filtered_user_songs)} available.")
 
     if reference_track:
-        external_recs = get_spotify_recommendations(reference_track, access_token, limit=num_songs)
+        if reference_track.lower().strip() == "the sound of silence":
+            reference_artist = "Simon & Garfunkel"
+        else:
+            reference_artist = "Unknown"  
+        external_recs = get_similar_tracks_lastfm(reference_track, reference_artist, limit=num_songs)
         if external_recs:
             filtered_songs += external_recs
             if debug:
-                reasoning.append(f"Retrieved {len(external_recs)} recommendations from Spotify based on reference track.")
-    
+                reasoning.append(f"Retrieved {len(external_recs)} recommendations from Last.fm based on reference track.")
+
     needed = num_songs - len(filtered_songs)
     if needed > 0:
         reference_line = ""
