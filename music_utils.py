@@ -123,7 +123,6 @@ def interpret_user_query(user_query, debug=False):
         if detected_genre:
             genres = [detected_genre]
 
-    # Check if the query explicitly requests using personal songs
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
     )
@@ -171,7 +170,6 @@ def interpret_user_query(user_query, debug=False):
             reasoning.append(f"OpenAI API Error: {str(e)}. Falling back to defaults.")
         extracted_data = {}
 
-    # Ensure duration_minutes is not None
     if extracted_data.get("duration_minutes") is None:
         extracted_data["duration_minutes"] = extracted_duration if extracted_duration else 60
 
@@ -228,10 +226,9 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     else:
         bpm_start, bpm_end = 60, 130
 
-    avg_song_length = 4  # in minutes
+    avg_song_length = 4  
     num_songs = max(5, round(duration / avg_song_length))
 
-    # Decide whether to use personal library
     if use_only_user_songs:
         user_data = get_user_preferences(access_token=access_token)
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
@@ -240,7 +237,6 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         if debug:
             reasoning.append(f"Using personal library exclusively; {len(filtered_songs)} songs after filtering.")
     else:
-        # Retrieve personal songs but use only a small portion (e.g., up to 20% of total) if available.
         filtered_songs = []
         user_data = get_user_preferences(access_token=access_token)
         if user_data:
@@ -252,7 +248,6 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             if debug:
                 reasoning.append(f"Using {num_user_songs} songs from personal library out of {len(filtered_user_songs)} available.")
 
-    # Calculate how many additional songs are needed from AI generation
     needed = num_songs - len(filtered_songs)
     if needed > 0:
         prompt = f"""
