@@ -86,7 +86,6 @@ if st.session_state.authenticated:
     
     if st.button("Generate Playlist"):
         FASTAPI_URL = "https://ai-dj-o4qg.onrender.com"
-        # Pass the current user's access token along with the request.
         access_token = st.session_state.token_info["access_token"]
         response = requests.get(f"{FASTAPI_URL}/generate_playlist", 
                                 params={"user_query": user_query, "debug": debug_mode, "access_token": access_token})

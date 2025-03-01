@@ -19,6 +19,26 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
+ENABLE_SONG_EXPLANATION = True
+
+def explain_song_selection(song, constraints):
+    """
+    Optionally ask OpenAI to explain why a given song meets the constraints.
+    """
+    prompt = f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' meets these constraints: BPM range {constraints.get('bpm_range')}, genres {constraints.get('genres')}, and release years {constraints.get('release_year_range')}."
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": "You are a helpful music analyst."},
+                      {"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=60
+        )
+        explanation = response.choices[0].message.content.strip()
+        return explanation
+    except Exception as e:
+        return "No explanation available."
+
 def get_user_preferences(access_token=None):
     if access_token:
         sp = spotipy.Spotify(auth=access_token)
@@ -106,11 +126,10 @@ def get_reference_track_details(reference_track):
               }
     return None
 
-def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
+def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5, debug=False):
     """
-    Uses the Last.fm API (track.getSimilar) to retrieve similar tracks
-    based on the reference track and artist.
-    Logs the raw JSON response for debugging.
+    Uses the Last.fm API (track.getSimilar) to retrieve similar tracks based on the
+    reference track and artist. If debug is True, prints the raw response.
     """
     api_key = os.environ.get("LASTFM_API_KEY")
     url = "http://ws.audioscrobbler.com/2.0/"
@@ -125,9 +144,12 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
     response = requests.get(url, params=params)
     if response.status_code == 200:
          raw = response.text
-         print(f"[DEBUG] Last.fm raw response: {raw}")
+         if debug:
+             print(f"[DEBUG] Last.fm raw response: {raw}")
          data = response.json()
          similar_tracks = data.get("similartracks", {}).get("track", [])
+         if not similar_tracks and debug:
+             print("[DEBUG] Last.fm returned no similar tracks.")
          recommendations = []
          for track in similar_tracks:
              recommendations.append({
@@ -140,13 +162,13 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
              })
          return recommendations
     else:
-         print(f"[DEBUG] Last.fm API error: Status code {response.status_code}")
+         if debug:
+             print(f"[DEBUG] Last.fm API error: Status code {response.status_code}")
     return []
 
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
 
-    # Record the original query.
     if debug:
         reasoning.append(f"Received user query: '{user_query}'")
 
@@ -163,7 +185,6 @@ def interpret_user_query(user_query, debug=False):
     else:
         if debug:
             reasoning.append("No explicit duration found in query.")
-
     if extracted_duration is None:
         extracted_duration = 60
         if debug:
@@ -203,7 +224,6 @@ def interpret_user_query(user_query, debug=False):
         else:
             reasoning.append("User did not request to exclusively use personal songs.")
 
-    # Build the prompt for constraint extraction.
     prompt = f"""
     Extract structured playlist constraints from the following user request:
     "{user_query}"
@@ -268,39 +288,41 @@ def matches_mood(song_mood, mood_constraints):
 
 def validate_playlist(playlist, constraints, debug=False):
     validation_log = [] if debug else None
-    # Begin by summarizing the query and extracted constraints.
-    log_header = "Validation Log:\n"
-    log_header += f"User Query: '{constraints.get('user_query', 'N/A')}'\n"
-    log_header += f"Extracted Duration: {constraints.get('duration_minutes')} minutes, BPM Range: {constraints.get('bpm_range')}, Genres: {constraints.get('genres')}, Mood Constraints: {constraints.get('mood_constraints')}\n"
-    log_header += f"User requested personal songs only: {constraints.get('use_only_user_songs')}\n"
-    validation_log.append(log_header)
-    # Then, for each song, report why it was chosen.
+    header = "Validation Log:\n"
+    header += f"User Query: '{constraints.get('user_query', 'N/A')}'\n"
+    header += f"Extracted Duration: {constraints.get('duration_minutes')} minutes\n"
+    header += f"BPM Range: {constraints.get('bpm_range')}\n"
+    header += f"Genres: {constraints.get('genres')}\n"
+    header += f"Mood Constraints: {constraints.get('mood_constraints')}\n"
+    header += f"Personal songs only: {constraints.get('use_only_user_songs')}\n"
+    validation_log.append(header)
     for song in playlist:
         msg = f"Song '{song['title']}' by {song['artist']}: "
         if "bpm" in song and song["bpm"] != "Unknown":
             bpm = song["bpm"]
             if constraints.get("bpm_range") and constraints["bpm_range"][0] <= bpm <= constraints["bpm_range"][1]:
-                msg += f"BPM {bpm} is within the range {constraints['bpm_range']}. "
+                msg += f"BPM {bpm} is within the required range {constraints['bpm_range']}. "
             else:
-                msg += f"BPM {bpm} is OUTSIDE the range {constraints['bpm_range']}. "
+                msg += f"BPM {bpm} is outside the required range {constraints['bpm_range']}. "
         else:
-            msg += "BPM info is not available; skipping BPM check. "
+            msg += "BPM info is not available; cannot validate BPM. "
         if "source" in song and "reason" in song:
-            msg += f"Source: {song['source']}. Reason: {song['reason']}."
+            msg += f"Source: {song['source']}. Reason: {song['reason']}. "
         else:
-            msg += "No source/reason information provided."
+            msg += "No source/reason information provided. "
+        if ENABLE_SONG_EXPLANATION:
+            extra_explanation = explain_song_selection(song, constraints)
+            msg += f"Explanation: {extra_explanation}"
         validation_log.append(msg)
     return validation_log
 
 def generate_constrained_playlist(user_query, access_token=None, debug=False):
-    # Extract constraints and chain-of-thought reasoning.
     if debug:
         constraints, reasoning = interpret_user_query(user_query, debug=debug)
     else:
         constraints = interpret_user_query(user_query, debug=debug)
         reasoning = None
 
-    # Add the original query into constraints for validation logging.
     constraints["user_query"] = user_query
 
     if constraints.get("explicit_song_count") is not None:
@@ -360,7 +382,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 reference_artist = "Unknown"
                 if debug:
                     reasoning.append("Could not find reference track details; using provided text.")
-            external_recs = get_similar_tracks_lastfm(reference_track_name, reference_artist, limit=num_songs)
+            external_recs = get_similar_tracks_lastfm(reference_track_name, reference_artist, limit=num_songs, debug=debug)
             if external_recs:
                 for rec in external_recs:
                     rec["source"] = "Last.fm"
