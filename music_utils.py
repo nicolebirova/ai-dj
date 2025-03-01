@@ -7,7 +7,6 @@ import openai
 import os
 import json
 import re
-import pandas as pd
 from spotipy.oauth2 import SpotifyOAuth
 from dotenv import load_dotenv
 
@@ -111,6 +110,7 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
     """
     Uses the Last.fm API (track.getSimilar) to retrieve similar tracks
     based on the reference track and artist.
+    Logs the raw JSON response for debugging.
     """
     api_key = os.environ.get("LASTFM_API_KEY")
     url = "http://ws.audioscrobbler.com/2.0/"
@@ -124,6 +124,8 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
     }
     response = requests.get(url, params=params)
     if response.status_code == 200:
+         raw = response.text
+         print(f"[DEBUG] Last.fm raw response: {raw}")
          data = response.json()
          similar_tracks = data.get("similartracks", {}).get("track", [])
          recommendations = []
@@ -137,10 +139,16 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5):
                   "mood": "Unknown"
              })
          return recommendations
+    else:
+         print(f"[DEBUG] Last.fm API error: Status code {response.status_code}")
     return []
 
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
+
+    # Record the original query.
+    if debug:
+        reasoning.append(f"Received user query: '{user_query}'")
 
     duration_match = re.search(r"(\d+(\.\d+)?)\s*(hour|hr|min|minutes)", user_query, re.IGNORECASE)
     extracted_duration = None
@@ -157,22 +165,9 @@ def interpret_user_query(user_query, debug=False):
             reasoning.append("No explicit duration found in query.")
 
     if extracted_duration is None:
-        if "car ride" in user_query.lower():
-            extracted_duration = 45  
-            if debug:
-                reasoning.append("Defaulting duration to 45 minutes for car ride.")
-        elif "workout" in user_query.lower():
-            extracted_duration = 60  
-            if debug:
-                reasoning.append("Defaulting duration to 60 minutes for workout.")
-        elif "study session" in user_query.lower():
-            extracted_duration = 90  
-            if debug:
-                reasoning.append("Defaulting duration to 90 minutes for study session.")
-        else:
-            extracted_duration = 60  
-            if debug:
-                reasoning.append("Defaulting duration to 60 minutes as generic fallback.")
+        extracted_duration = 60
+        if debug:
+            reasoning.append("Defaulting duration to 60 minutes as generic fallback.")
 
     genres, mood_constraints = [], []
     if "movie" in user_query.lower() or "soundtrack" in user_query.lower() or "cinematic" in user_query.lower():
@@ -196,6 +191,8 @@ def interpret_user_query(user_query, debug=False):
                 break
         if detected_genre:
             genres = [detected_genre]
+    if debug and not genres:
+        reasoning.append("No specific genre detected; defaulting to 'any'.")
 
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
@@ -206,14 +203,15 @@ def interpret_user_query(user_query, debug=False):
         else:
             reasoning.append("User did not request to exclusively use personal songs.")
 
+    # Build the prompt for constraint extraction.
     prompt = f"""
     Extract structured playlist constraints from the following user request:
     "{user_query}"
-
+    
     Response must be valid JSON with the following keys:
     {{
       "explicit_song_count": <number or null>, 
-      "duration_minutes": {extracted_duration if extracted_duration else 60},
+      "duration_minutes": {extracted_duration},
       "bpm_range": [60, 130],
       "genres": {genres if genres else '["any"]'},
       "release_year_range": [2019, 2024],
@@ -221,13 +219,12 @@ def interpret_user_query(user_query, debug=False):
       "use_only_user_songs": {str(use_only_user_songs).lower()},
       "reference_track": <string or null>
     }}
-
-    If the query explicitly states a number of songs (e.g., "give me 7 songs..."), set "explicit_song_count" to that number; otherwise, set it to null.
-    If the query references a specific song (e.g., "like Neon Moon by Brooks & Dunn"), set "reference_track" to that song's title; otherwise, set it to null.
+    
+    If the query explicitly states a number of songs (e.g., "give me 4 songs..."), set "explicit_song_count" to that number; otherwise, set it to null.
+    If the query references a specific song (e.g., "like Halloween by Novo Amor"), set "reference_track" to that song's title; otherwise, set it to null.
     """
     if debug:
         reasoning.append("Constructed prompt for OpenAI API for extracting constraints.")
-
     try:
         response = openai.chat.completions.create(
             model="gpt-4o",
@@ -249,9 +246,7 @@ def interpret_user_query(user_query, debug=False):
             reasoning.append(f"OpenAI API Error: {str(e)}. Falling back to defaults.")
         extracted_data = {}
 
-    if extracted_data.get("duration_minutes") is None:
-        extracted_data["duration_minutes"] = extracted_duration if extracted_duration else 60
-
+    extracted_data.setdefault("duration_minutes", extracted_duration)
     extracted_data.setdefault("bpm_range", [60, 130])
     extracted_data.setdefault("genres", genres if genres else ["any"])
     extracted_data.setdefault("release_year_range", [2019, 2024])
@@ -273,30 +268,40 @@ def matches_mood(song_mood, mood_constraints):
 
 def validate_playlist(playlist, constraints, debug=False):
     validation_log = [] if debug else None
-    bpm_range = constraints.get("bpm_range", [60, 130])
+    # Begin by summarizing the query and extracted constraints.
+    log_header = "Validation Log:\n"
+    log_header += f"User Query: '{constraints.get('user_query', 'N/A')}'\n"
+    log_header += f"Extracted Duration: {constraints.get('duration_minutes')} minutes, BPM Range: {constraints.get('bpm_range')}, Genres: {constraints.get('genres')}, Mood Constraints: {constraints.get('mood_constraints')}\n"
+    log_header += f"User requested personal songs only: {constraints.get('use_only_user_songs')}\n"
+    validation_log.append(log_header)
+    # Then, for each song, report why it was chosen.
     for song in playlist:
-        msg = f"Song '{song['title']}' by {song['artist']}:"
+        msg = f"Song '{song['title']}' by {song['artist']}: "
         if "bpm" in song and song["bpm"] != "Unknown":
             bpm = song["bpm"]
-            if bpm_range[0] <= bpm <= bpm_range[1]:
-                msg += f" BPM {bpm} is within range {bpm_range}."
+            if constraints.get("bpm_range") and constraints["bpm_range"][0] <= bpm <= constraints["bpm_range"][1]:
+                msg += f"BPM {bpm} is within the range {constraints['bpm_range']}. "
             else:
-                msg += f" BPM {bpm} is OUTSIDE range {bpm_range}."
+                msg += f"BPM {bpm} is OUTSIDE the range {constraints['bpm_range']}. "
         else:
-            msg += " BPM info is not available; skipping BPM check."
+            msg += "BPM info is not available; skipping BPM check. "
         if "source" in song and "reason" in song:
-            msg += f" Source: {song['source']}. Reason: {song['reason']}."
+            msg += f"Source: {song['source']}. Reason: {song['reason']}."
         else:
-            msg += " No source/reason information provided."
+            msg += "No source/reason information provided."
         validation_log.append(msg)
     return validation_log
 
 def generate_constrained_playlist(user_query, access_token=None, debug=False):
+    # Extract constraints and chain-of-thought reasoning.
     if debug:
         constraints, reasoning = interpret_user_query(user_query, debug=debug)
     else:
         constraints = interpret_user_query(user_query, debug=debug)
         reasoning = None
+
+    # Add the original query into constraints for validation logging.
+    constraints["user_query"] = user_query
 
     if constraints.get("explicit_song_count") is not None:
         num_songs = int(constraints["explicit_song_count"])
@@ -363,7 +368,10 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 filtered_songs += external_recs
                 if debug:
                     reasoning.append(f"Retrieved {len(external_recs)} recommendations from Last.fm based on reference track.")
-
+            else:
+                if debug:
+                    reasoning.append("No recommendations returned from Last.fm; falling back to AI generation.")
+    
     needed = num_songs - len(filtered_songs)
     if needed > 0:
         reference_line = ""
@@ -380,6 +388,9 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         
         Respond in JSON format as a list of objects, each with keys "title", "artist", "bpm", and "release_year".
         """
+        if debug:
+            reasoning.append("Prompting AI for supplementary songs with the following prompt:")
+            reasoning.append(prompt)
         try:
             response = openai.chat.completions.create(
                 model="gpt-4o",
