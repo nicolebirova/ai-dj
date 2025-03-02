@@ -1,3 +1,6 @@
+#########################################################
+## This file contains the UI interface implementation. ##
+#########################################################
 import streamlit as st
 import requests
 import spotipy
