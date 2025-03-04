@@ -20,10 +20,10 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-ENABLE_SONG_EXPLANATION = False  # Set to True to get extra explanation per song.
+ENABLE_SONG_EXPLANATION = False  # Set to True to get extra explanation per song. (idt this works very well, cuts off)
 
-def explain_song_selection(song, constraints):
-    prompt = (f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' "
+def explain_song_selection(song, constraints): ## maybe change this to user query instead of constraints
+    prompt = (f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' " 
               f"meets the following constraints: a BPM range of {constraints.get('bpm_range')}, "
               f"genres {constraints.get('genres')}, instrument {constraints.get('instrument')}, "
               f"and release years {constraints.get('release_year_range')}.")

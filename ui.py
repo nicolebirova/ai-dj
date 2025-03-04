@@ -54,7 +54,7 @@ if not st.session_state.authenticated:
                 sp = spotipy.Spotify(auth=token_info["access_token"])
                 st.session_state.user_info = sp.current_user()
                 st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
-                st.rerun()  # Refresh UI
+                st.rerun() 
             except Exception as e:
                 st.error(f"❌ Authentication failed: {e}")
         else:
