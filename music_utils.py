@@ -32,9 +32,9 @@ if not os.path.exists(CACHE_DIR):
 LIKED_SONGS_CACHE_FILENAME = os.path.join(CACHE_DIR, "liked_songs_cache.json")
 LIKED_SONGS_CACHE_TTL = 43200  
 TOP_ARTISTS_CACHE_FILENAME = os.path.join(CACHE_DIR, "top_artists_cache.json")
-TOP_ARTISTS_CACHE_TTL = 21600   
+TOP_ARTISTS_CACHE_TTL = 21600  
 TOP_TRACKS_CACHE_FILENAME = os.path.join(CACHE_DIR, "top_tracks_cache.json")
-TOP_TRACKS_CACHE_TTL = 3600    
+TOP_TRACKS_CACHE_TTL = 3600     
 
 def load_cache(filename, ttl):
     if os.path.exists(filename):
@@ -130,6 +130,59 @@ def load_top_tracks_cache():
 def save_top_tracks_cache(items):
     save_cache(TOP_TRACKS_CACHE_FILENAME, items)
 
+def label_song_with_artist_info(song, debug=False):
+    """
+    Enrich a song (with 'name' and 'artist') by fetching additional artist metadata.
+    Adds a 'labeled_genres' field (and optionally other info).
+    """
+    try:
+        sp = spotipy.Spotify(auth_manager=sp_oauth)
+        results = sp.search(q=f"artist:{song['artist']}", type="artist", limit=1)
+        if results["artists"]["items"]:
+            artist_info = results["artists"]["items"][0]
+            song["labeled_genres"] = artist_info.get("genres", [])
+            song["artist_info"] = artist_info
+        else:
+            song["labeled_genres"] = []
+    except Exception as e:
+        if debug:
+            print(f"[DEBUG] Error labeling song {song['name']} by {song['artist']}: {e}")
+        song["labeled_genres"] = []
+    return song
+
+def cache_labeled_liked_songs(access_token, debug=False):
+    """
+    Pre-fetch all liked songs, enrich each with artist metadata, and cache the labeled results.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
+    loop.close()
+    liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
+    with ThreadPoolExecutor() as executor:
+        labeled_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
+    filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
+    data = {"timestamp": time.time(), "items": labeled_songs}
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    if debug:
+        print(f"[DEBUG] Cached {len(labeled_songs)} labeled liked songs.")
+    return labeled_songs
+
+def load_labeled_liked_songs_cache(ttl=43200, debug=False):
+    """
+    Load enriched liked songs data from cache if valid.
+    """
+    filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if time.time() - data.get("timestamp", 0) < ttl:
+                if debug:
+                    print(f"[DEBUG] Loaded {len(data.get('items', []))} labeled liked songs from cache.")
+                return data.get("items", [])
+    return None
+
 def get_user_preferences(access_token=None, debug=False):
     if access_token:
         sp = spotipy.Spotify(auth=access_token)
@@ -158,11 +211,17 @@ def get_user_preferences(access_token=None, debug=False):
         save_top_tracks_cache(top_tracks)
     track_names = [{"name": track["name"], "artist": track["artists"][0]["name"]} for track in top_tracks]
     
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
-    loop.close()
-    liked_track_names = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
+    labeled_liked_songs = load_labeled_liked_songs_cache(ttl=43200, debug=debug)
+    if labeled_liked_songs is None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
+        loop.close()
+        liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
+        with ThreadPoolExecutor() as executor:
+            labeled_liked_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
+        save_cache(LIKED_SONGS_CACHE_FILENAME, liked_songs)  
+    liked_track_names = labeled_liked_songs
     
     return {
         "top_artists": artist_names,
@@ -172,6 +231,11 @@ def get_user_preferences(access_token=None, debug=False):
     }
 
 def song_matches_genre(song, target_genres):
+    if "labeled_genres" in song:
+        for tg in target_genres:
+            if any(tg.lower() in g.lower() for g in song["labeled_genres"]):
+                return True
+        return False
     artist_name = song["artist"]
     try:
         sp = spotipy.Spotify(auth_manager=sp_oauth)
@@ -211,7 +275,6 @@ def get_reference_track_details(reference_track, debug=False):
     else:
         track_name = reference_track.strip()
         artist_name = None
-
     api_key = os.environ.get("LASTFM_API_KEY")
     url = "http://ws.audioscrobbler.com/2.0/"
     params = {
@@ -650,58 +713,3 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         return {"playlist": playlist, "reasoning": reasoning}
     else:
         return {"playlist": playlist}
-
-##
-
-def label_song_with_artist_info(song, debug=False):
-    """
-    Given a song (with keys 'name' and 'artist'), fetch additional artist info (e.g., genres)
-    and add it to the song.
-    """
-    try:
-        sp = spotipy.Spotify(auth_manager=sp_oauth)
-        results = sp.search(q=f"artist:{song['artist']}", type="artist", limit=1)
-        if results["artists"]["items"]:
-            artist_info = results["artists"]["items"][0]
-            song["labeled_genres"] = artist_info.get("genres", [])
-            song["artist_info"] = artist_info  
-        else:
-            song["labeled_genres"] = []
-    except Exception as e:
-        if debug:
-            print(f"[DEBUG] Error labeling song {song['name']} by {song['artist']}: {e}")
-        song["labeled_genres"] = []
-    return song
-
-def cache_labeled_liked_songs(access_token, debug=False):
-    """
-    Pre-fetch all liked songs, label each with artist info/genres, and cache the processed results.
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
-    loop.close()
-    liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
-    with ThreadPoolExecutor() as executor:
-        labeled_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
-    filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
-    data = {"timestamp": time.time(), "items": labeled_songs}
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    if debug:
-        print(f"[DEBUG] Cached {len(labeled_songs)} labeled liked songs.")
-    return labeled_songs
-
-def load_labeled_liked_songs_cache(ttl=43200, debug=False):
-    """
-    Load processed liked songs from cache if still valid.
-    """
-    filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if time.time() - data.get("timestamp", 0) < ttl:
-                if debug:
-                    print(f"[DEBUG] Loaded {len(data.get('items', []))} labeled liked songs from cache.")
-                return data.get("items", [])
-    return None

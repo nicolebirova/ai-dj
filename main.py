@@ -11,7 +11,13 @@ from dotenv import load_dotenv
 import json
 import re
 from typing import List
-from music_utils import get_user_preferences, get_song_metadata, interpret_user_query, generate_constrained_playlist, cache_labeled_liked_songs
+from music_utils import (
+    get_user_preferences,
+    get_song_metadata,
+    interpret_user_query,
+    generate_constrained_playlist,
+    cache_labeled_liked_songs
+)
 
 load_dotenv()
 
@@ -54,7 +60,6 @@ def generate_personalized_playlist(
     result = generate_constrained_playlist(user_query, access_token=access_token, debug=debug)
     return result
 
-
 @app.get("/save_playlist")
 def save_playlist(
     playlist_name: str, 
@@ -67,11 +72,10 @@ def save_playlist(
     sp.playlist_add_items(playlist["id"], track_uris)
     return {"message": f"Playlist '{playlist_name}' created!", "url": playlist["external_urls"]["spotify"]}
 
-
 @app.get("/cache_user_data")
 def cache_user_data(access_token: str = Query(..., description="User's Spotify access token"), debug: bool = Query(False)):
     """
-    When a user signs in, pre-fetch and label all liked songs and cache them.
+    Pre-fetch and label all liked songs, then cache the processed data.
     """
     labeled_songs = cache_labeled_liked_songs(access_token, debug=debug)
     return {"cached_count": len(labeled_songs)}
