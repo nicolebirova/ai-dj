@@ -1,15 +1,19 @@
 ##############################################################################
 ## This file contains helper functions (metadata, filtering, external APIs) ##
 ##############################################################################
-import spotipy
+import os
+import re
+import json
+import time
+import asyncio
+import aiohttp
 import requests
 import openai
-import os
-import json
-import re
-from urllib.parse import quote
+import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from urllib.parse import quote
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
 
@@ -20,7 +24,73 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-ENABLE_SONG_EXPLANATION = False  # Set to True to get extra explanation 
+ENABLE_SONG_EXPLANATION = False  # Set to True to get extra explanation per song.
+CACHE_FILENAME = "liked_songs_cache.json"
+CACHE_TTL = 43200  # seconds (12 hours)
+
+# caching
+def load_liked_songs_cache():
+    if os.path.exists(CACHE_FILENAME):
+        with open(CACHE_FILENAME, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if time.time() - data.get("timestamp", 0) < CACHE_TTL:
+                return data.get("items", [])
+    return None
+
+def save_liked_songs_cache(items):
+    data = {"timestamp": time.time(), "items": items}
+    with open(CACHE_FILENAME, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+# retrieving
+async def fetch_liked_songs_batch(session, access_token, offset, limit=50, debug=False):
+    url = "https://api.spotify.com/v1/me/tracks"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"limit": limit, "offset": offset}
+    async with session.get(url, headers=headers, params=params) as resp:
+        if resp.status != 200:
+            if debug:
+                print(f"[DEBUG] Error fetching batch at offset {offset}: HTTP {resp.status}")
+            return None
+        data = await resp.json()
+        if debug:
+            print(f"[DEBUG] Fetched {len(data.get('items', []))} songs at offset {offset}.")
+        return data
+
+async def async_get_all_liked_songs(access_token, debug=False, min_matches=None, genres=None):
+    cached = load_liked_songs_cache()
+    if cached is not None:
+        if debug:
+            print(f"[DEBUG] Loaded {len(cached)} liked songs from cache.")
+        return cached
+
+    items = []
+    limit = 50
+    offset = 0
+    async with aiohttp.ClientSession() as session:
+        while True:
+            data = await fetch_liked_songs_batch(session, access_token, offset, limit, debug)
+            if not data:
+                break
+            batch = data.get("items", [])
+            items.extend(batch)
+            if debug:
+                print(f"[DEBUG] Total songs so far: {len(items)}")
+            if genres and min_matches:
+                with ThreadPoolExecutor() as executor:
+                    futures = [executor.submit(song_matches_genre, 
+                                               {"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]}, 
+                                               genres) for track in batch]
+                    matches = sum(f.result() for f in futures)
+                if matches >= min_matches:
+                    if debug:
+                        print(f"[DEBUG] Reached minimum matching songs ({min_matches}) in current batch.")
+                    break
+            if data.get("next") is None:
+                break
+            offset += limit
+    save_liked_songs_cache(items)
+    return items
 
 def explain_song_selection(song, constraints):
     prompt = (f"Explain briefly why the song '{song.get('title')}' by '{song.get('artist')}' " 
@@ -41,23 +111,6 @@ def explain_song_selection(song, constraints):
     except Exception as e:
         return "No additional explanation is available at this time."
 
-def get_all_liked_songs(sp, debug=False):
-    liked_songs = []
-    limit = 50  # Max allowed by Spotify
-    offset = 0
-    while True:
-        response = sp.current_user_saved_tracks(limit=limit, offset=offset)
-        items = response.get("items", [])
-        liked_songs.extend(items)
-        if debug:
-            print(f"[DEBUG] Fetched {len(items)} songs at offset {offset}.")
-        if response.get("next") is None:
-            break
-        offset += limit
-    if debug:
-        print(f"[DEBUG] Total liked songs retrieved: {len(liked_songs)}")
-    return liked_songs
-
 def get_user_preferences(access_token=None, debug=False):
     if access_token:
         sp = spotipy.Spotify(auth=access_token)
@@ -69,7 +122,10 @@ def get_user_preferences(access_token=None, debug=False):
     top_tracks = sp.current_user_top_tracks(limit=10)["items"]
     track_names = [{"name": track["name"], "artist": track["artists"][0]["name"]} for track in top_tracks]
     
-    liked_songs_raw = get_all_liked_songs(sp, debug=debug)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
+    loop.close()
     liked_track_names = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
     
     return {
@@ -208,12 +264,12 @@ def interpret_user_query(user_query, debug=False):
         genres = ["orchestral", "cinematic", "electronic", "synthwave", "ambient"]
         mood_constraints = ["epic", "dramatic", "adventurous"]
         if debug:
-            reasoning.append("The query appears to be about a cinematic theme; I set genres and mood constraints accordingly.")
+            reasoning.append("The query appears to be about a cinematic theme; set genres and mood constraints accordingly.")
     elif any(term in user_query.lower() for term in ["relax", "stress"]):
         genres = ["lofi", "chill", "ambient", "soft rock", "indie"]
         mood_constraints = ["calm", "peaceful", "soothing"]
         if debug:
-            reasoning.append("The query seems to aim for relaxation; I set calming genres and mood constraints.")
+            reasoning.append("The query seems to aim for relaxation; set calming genres and mood constraints.")
     else:
         known_genres = ["bollywood", "hollywood", "disney", "pop", "rock", "hip hop", "rap", "jazz", "classical", "electronic", "edm", "country", "indie", "metal", "reggae", "r&b"]
         detected_genre = None
@@ -221,34 +277,34 @@ def interpret_user_query(user_query, debug=False):
             if genre in user_query.lower():
                 detected_genre = genre
                 if debug:
-                    reasoning.append(f"I detected a specific genre: {genre}.")
+                    reasoning.append(f"Detected a specific genre: {genre}.")
                 break
         if detected_genre:
             genres = [detected_genre]
     if debug and not genres:
-        reasoning.append("I did not detect any specific genre, so I am defaulting to 'any'.")
+        reasoning.append("No specific genre detected; defaulting to 'any'.")
 
     concern_bpm = bool(re.search(r"\bBPM\b", user_query, re.IGNORECASE))
     if debug:
         if concern_bpm:
-            reasoning.append("The query mentions BPM, so I will perform BPM validation.")
+            reasoning.append("Query mentions BPM; will perform BPM validation.")
         else:
-            reasoning.append("The query does not mention BPM, so I will skip BPM validation.")
+            reasoning.append("Query does not mention BPM; skipping BPM validation.")
 
     use_only_user_songs = any(
         term in user_query.lower() for term in ["only my liked songs", "using my liked songs", "using my favorites", "using only my liked songs", "using only my favorites"]
     )
     if debug:
         if use_only_user_songs:
-            reasoning.append("The user requested that only their personal songs be used.")
+            reasoning.append("User requested only personal songs.")
         else:
-            reasoning.append("The query did not specify that only personal songs should be used.")
+            reasoning.append("No personal-only songs constraint specified.")
 
     gradual_bpm = False
     if re.search(r"increase", user_query, re.IGNORECASE) or re.search(r"progress", user_query, re.IGNORECASE):
         gradual_bpm = True
         if debug:
-            reasoning.append("The query indicates a gradual BPM progression.")
+            reasoning.append("Query indicates gradual BPM progression.")
 
     instrument_list = ["guitar", "piano", "violin", "drums", "saxophone", "flute", "bass", "cello", "trumpet", "harp", "ukulele", "mandolin"]
     detected_instrument = None
@@ -256,7 +312,7 @@ def interpret_user_query(user_query, debug=False):
         if inst in user_query.lower():
             detected_instrument = inst
             if debug:
-                reasoning.append(f"I detected the instrument '{inst}' in the query.")
+                reasoning.append(f"Detected instrument: {inst}.")
             break
 
     exclude_artist_flag = False
@@ -281,14 +337,14 @@ def interpret_user_query(user_query, debug=False):
     Please extract structured playlist constraints from the following query:
     "{user_query}"
     
-    The JSON response should include the keys: 
-    "explicit_song_count", "duration_minutes", "bpm_range", "genres", "release_year_range", "mood_constraints", "use_only_user_songs", "reference_track", and "instrument".
-    If a specific number of songs is mentioned, set "explicit_song_count" to that number; otherwise, set it to null.
-    If a specific song is mentioned (e.g., "like Halloween by Novo Amor"), set "reference_track" to that song's title; otherwise, set it to null.
+    The JSON response should include: 
+    "explicit_song_count", "duration_minutes", "bpm_range", "genres", "release_year_range", "mood_constraints", "use_only_user_songs", "reference_track", "instrument".
+    If a song count is mentioned, set "explicit_song_count" to that number; otherwise, null.
+    If a specific song is mentioned (e.g., "like Halloween by Novo Amor"), set "reference_track" accordingly; otherwise, null.
     If an instrument is mentioned (e.g., "guitar pieces"), set "instrument" accordingly.
     """
     if debug:
-        reasoning.append("I constructed the following prompt for the OpenAI API to extract constraints:")
+        reasoning.append("Constructed prompt for OpenAI API to extract constraints:")
         reasoning.append(prompt)
     try:
         response = openai.chat.completions.create(
@@ -306,7 +362,7 @@ def interpret_user_query(user_query, debug=False):
         extracted_json = json.loads(raw_content)
     except json.JSONDecodeError as e:
         if debug:
-            reasoning.append(f"JSON decoding error: {e}. Using default constraints.")
+            reasoning.append(f"JSON decode error: {e}. Using default constraints.")
         extracted_json = {}
     except Exception as e:
         if debug:
@@ -340,7 +396,7 @@ def interpret_user_query(user_query, debug=False):
         if m:
             extracted_json["reference_track"] = m.group(1).strip()
             if debug:
-                reasoning.append(f"I extracted the reference track from the query using regex: {extracted_json['reference_track']}")
+                reasoning.append(f"Extracted reference track via regex: {extracted_json['reference_track']}")
     
     if exclude_artist_flag and extracted_json.get("reference_track"):
         ref_details = get_reference_track_details(extracted_json["reference_track"], debug)
@@ -352,7 +408,7 @@ def interpret_user_query(user_query, debug=False):
         extracted_json["exclude_artist"] = None
 
     if debug:
-        reasoning.append(f"My final extracted constraints are: {extracted_json}")
+        reasoning.append(f"Final extracted constraints: {extracted_json}")
         return extracted_json, reasoning
     else:
         return extracted_json
@@ -364,30 +420,30 @@ def matches_mood(song_mood, mood_constraints):
 
 def validate_playlist(playlist, constraints, debug=False):
     validation_log = [] if debug else None
-    header = ("Here is my summary of the validation process:\n"
-              f"- The original query was: '{constraints.get('user_query', 'N/A')}'.\n"
-              f"- I extracted a duration of {constraints.get('duration_minutes')} minutes, a BPM range of {constraints.get('bpm_range')}, "
-              f"genres: {constraints.get('genres')}, and mood constraints: {constraints.get('mood_constraints')}.\n"
-              f"- The instrument specified is: {constraints.get('instrument') if constraints.get('instrument') else 'none'}.\n"
+    header = ("Summary of validation:\n"
+              f"- Query: '{constraints.get('user_query', 'N/A')}'.\n"
+              f"- Duration: {constraints.get('duration_minutes')} min, BPM range: {constraints.get('bpm_range')}, "
+              f"Genres: {constraints.get('genres')}, Mood: {constraints.get('mood_constraints')}.\n"
+              f"- Instrument: {constraints.get('instrument') if constraints.get('instrument') else 'none'}.\n"
               f"- Personal songs only: {constraints.get('use_only_user_songs')}.\n"
-              f"- BPM validation is {'enabled' if constraints.get('concern_bpm') else 'disabled'}, and gradual BPM progression is {'requested' if constraints.get('gradual_bpm') else 'not requested'}.\n")
+              f"- BPM validation is {'enabled' if constraints.get('concern_bpm') else 'disabled'} and gradual BPM progression is {'requested' if constraints.get('gradual_bpm') else 'not requested'}.\n")
     if constraints.get("exclude_artist"):
-        header += f"- I will exclude songs by: {constraints.get('exclude_artist')}.\n"
+        header += f"- Excluding artist: {constraints.get('exclude_artist')}.\n"
     validation_log.append(header)
     for i, song in enumerate(playlist):
-        msg = f"For song '{song['title']}' by {song['artist']}: "
+        msg = f"Song '{song['title']}' by {song['artist']}: "
         if constraints.get("gradual_bpm"):
             num_songs = len(playlist)
             expected_bpm = constraints["bpm_range"][0]
             if num_songs > 1:
                 expected_bpm += i * (constraints["bpm_range"][1] - constraints["bpm_range"][0]) / (num_songs - 1)
-            msg += f"I expected its BPM to be around {round(expected_bpm)}. "
+            msg += f"Expected BPM around {round(expected_bpm)}. "
             if "bpm" in song and song["bpm"] != "Unknown":
                 bpm = song["bpm"]
                 if constraints["bpm_range"][0] <= bpm <= constraints["bpm_range"][1]:
-                    msg += f"I found that its actual BPM is {bpm}, which is within the desired range. "
+                    msg += f"Actual BPM is {bpm} (within range). "
                 else:
-                    msg += f"However, its actual BPM of {bpm} is outside the desired range. "
+                    msg += f"Actual BPM is {bpm} (outside range). "
             else:
                 song["bpm"] = round(expected_bpm)
                 msg += f"Assigned expected BPM of {round(expected_bpm)}. "
@@ -395,22 +451,19 @@ def validate_playlist(playlist, constraints, debug=False):
             if "bpm" in song and song["bpm"] != "Unknown":
                 bpm = song["bpm"]
                 if constraints["bpm_range"][0] <= bpm <= constraints["bpm_range"][1]:
-                    msg += f"I verified that the BPM of {bpm} is within the required range {constraints['bpm_range']}. "
+                    msg += f"BPM {bpm} is within range. "
                 else:
-                    msg += f"Unfortunately, the BPM of {bpm} is outside the required range {constraints['bpm_range']}. "
+                    msg += f"BPM {bpm} is outside the range {constraints['bpm_range']}. "
             else:
                 fallback_bpm = int((constraints["bpm_range"][0] + constraints["bpm_range"][1]) / 2)
                 song["bpm"] = fallback_bpm
                 msg += f"Assigned fallback BPM of {fallback_bpm}. "
         else:
-            msg += "No BPM validation was performed for this song. "
+            msg += "No BPM validation performed. "
         if "source" in song and "reason" in song:
-            msg += f"This song comes from the '{song['source']}' source because {song['reason']}. "
+            msg += f"Source: {song['source']} because {song['reason']}."
         else:
-            msg += "No additional source or reason information available. "
-        if ENABLE_SONG_EXPLANATION:
-            extra_explanation = explain_song_selection(song, constraints)
-            msg += f"Extra explanation: {extra_explanation}"
+            msg += "No additional source info."
         validation_log.append(msg)
     return validation_log
 
@@ -426,13 +479,13 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     if constraints.get("explicit_song_count") is not None:
         num_songs = int(constraints["explicit_song_count"])
         if debug:
-            reasoning.append(f"I will use the explicit song count of {num_songs} as specified in the query.")
+            reasoning.append(f"Using explicit song count: {num_songs}.")
     else:
         duration = constraints["duration_minutes"]
         avg_song_length = 4
         num_songs = max(5, round(duration / avg_song_length))
         if debug:
-            reasoning.append(f"Based on the duration of {duration} minutes, I calculated that the playlist should contain about {num_songs} songs.")
+            reasoning.append(f"Calculated playlist should contain about {num_songs} songs based on duration.")
 
     bpm_range = constraints["bpm_range"]
     genres = constraints["genres"]
@@ -449,16 +502,24 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     filtered_songs = []
     if use_only_user_songs:
         user_data = get_user_preferences(access_token=access_token, debug=debug)
+        # Combine liked songs and top tracks.
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
-        for song in user_songs:
-            if song_matches_genre(song, genres):
-                song["source"] = "personal"
-                song["reason"] = f"Song matches the genre constraint {genres}."
-                filtered_songs.append(song)
-                if debug:
-                    reasoning.append(f"Song '{song['name']}' by {song['artist']} matches the genre constraint {genres}.")
+        # Use parallel processing to filter songs by genre.
+        with ThreadPoolExecutor() as executor:
+            futures = {executor.submit(song_matches_genre, song, genres): song for song in user_songs}
+            for future in futures:
+                try:
+                    if future.result():
+                        song = futures[future]
+                        song["source"] = "personal"
+                        song["reason"] = f"Matches genre constraint {genres}."
+                        filtered_songs.append(song)
+                        if debug:
+                            reasoning.append(f"Song '{song['name']}' by {song['artist']} matches genre {genres}.")
+                except Exception as e:
+                    continue
         if debug:
-            reasoning.append(f"After filtering, {len(filtered_songs)} songs remain from your personal library.")
+            reasoning.append(f"After filtering, {len(filtered_songs)} personal songs remain.")
     else:
         if reference_track:
             ref_details = get_reference_track_details(reference_track, debug)
@@ -466,43 +527,41 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 reference_track_name = ref_details.get("title")
                 reference_artist = ref_details.get("artist")
                 if debug:
-                    reasoning.append(f"I found the reference track details: '{reference_track_name}' by '{reference_artist}'.")
+                    reasoning.append(f"Reference track details: '{reference_track_name}' by '{reference_artist}'.")
             else:
                 reference_track_name = reference_track
                 reference_artist = "Unknown"
                 if debug:
-                    reasoning.append("I could not determine detailed reference track information, so I used the provided reference text.")
+                    reasoning.append("Using provided reference track text; detailed info not found.")
             external_recs = get_similar_tracks_lastfm(reference_track_name, reference_artist, limit=num_songs, debug=debug)
             if external_recs:
                 for rec in external_recs:
                     rec["source"] = "Last.fm"
-                    rec["reason"] = (f"It was recommended by Last.fm based on the reference track "
-                                     f"'{reference_track_name}' by '{reference_artist}'.")
+                    rec["reason"] = (f"Recommended by Last.fm based on reference track '{reference_track_name}' by '{reference_artist}'.")
                 filtered_songs += external_recs
                 if debug:
-                    reasoning.append(f"I received {len(external_recs)} recommendations from Last.fm based on the reference track.")
+                    reasoning.append(f"Received {len(external_recs)} recommendations from Last.fm.")
             else:
                 if debug:
-                    reasoning.append("Last.fm did not return any recommendations; falling back on AI generation.")
+                    reasoning.append("No recommendations from Last.fm; falling back on AI generation.")
     
     if constraints.get("exclude_artist"):
         exclude = constraints["exclude_artist"].strip().lower()
         before = len(filtered_songs)
         filtered_songs = [song for song in filtered_songs if song["artist"].strip().lower() != exclude]
         if debug:
-            reasoning.append(f"Excluded {before - len(filtered_songs)} song(s) by '{exclude}' from the recommendations.")
+            reasoning.append(f"Excluded {before - len(filtered_songs)} song(s) by '{exclude}'.")
 
     needed = num_songs - len(filtered_songs)
     if needed > 0:
         reference_line = ""
         if reference_track:
-            reference_line = (f"Reference track: {reference_track}. This track is known for its unique style and characteristics. "
-                              f"Please generate similar songs.")
+            reference_line = (f"Reference track: {reference_track}. Generate similar songs.")
         instrument_line = ""
         if constraints.get("instrument"):
-            instrument_line = f" All songs should prominently feature the {constraints.get('instrument')}."
+            instrument_line = f" Include songs with prominent {constraints.get('instrument')}."
         prompt = f"""
-        Please generate a playlist with the following constraints:
+        Generate a playlist with the following constraints:
         - Genre: {genres}
         - BPM range: {bpm_start} to {bpm_end}
         - Release years: {release_year_range[0]} to {release_year_range[1]}
@@ -514,7 +573,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         Respond in JSON format as a list of objects with keys "title", "artist", "bpm", and "release_year".
         """
         if debug:
-            reasoning.append("Prompting AI to generate additional songs with the following instructions:")
+            reasoning.append("Prompting AI to generate additional songs with:")
             reasoning.append(prompt)
         try:
             response = openai.chat.completions.create(
@@ -532,17 +591,18 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                 for song in ai_songs:
                     song["liked"] = False
                     song["source"] = "AI"
-                    song["reason"] = "Generated by the AI to meet the remaining song requirement."
+                    song["reason"] = "Generated by AI to meet remaining song count."
                 filtered_songs += ai_songs
                 if debug:
-                    reasoning.append(f"AI generated {len(ai_songs)} songs, which were added to the playlist.")
+                    reasoning.append(f"AI generated {len(ai_songs)} songs, added to playlist.")
             else:
                 if debug:
-                    reasoning.append("AI response could not be parsed as valid JSON; no additional songs were added.")
+                    reasoning.append("AI response did not return valid JSON; no songs added.")
         except Exception as e:
             if debug:
-                reasoning.append(f"Error generating additional songs: {str(e)}")
+                reasoning.append(f"Error during AI generation: {str(e)}")
     
+    # For any song missing BPM, assign fallback once (without repetitive messages).
     for song in filtered_songs:
         if song.get("bpm", "Unknown") == "Unknown":
             fallback_bpm = int((bpm_start + bpm_end) / 2)
@@ -551,7 +611,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     if constraints.get("gradual_bpm"):
         filtered_songs = sorted(filtered_songs, key=lambda s: s.get("bpm", int((bpm_start+bpm_end)/2)))
         if debug:
-            reasoning.append("Sorted songs in ascending order of BPM for gradual progression.")
+            reasoning.append("Sorted songs by BPM for gradual progression.")
 
     user_data = get_user_preferences(access_token=access_token, debug=debug)
     personal_tracks = {
