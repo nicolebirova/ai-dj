@@ -502,9 +502,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     filtered_songs = []
     if use_only_user_songs:
         user_data = get_user_preferences(access_token=access_token, debug=debug)
-        # Combine liked songs and top tracks.
         user_songs = user_data["liked_songs"] + user_data["top_tracks"]
-        # Use parallel processing to filter songs by genre.
         with ThreadPoolExecutor() as executor:
             futures = {executor.submit(song_matches_genre, song, genres): song for song in user_songs}
             for future in futures:
@@ -602,7 +600,6 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             if debug:
                 reasoning.append(f"Error during AI generation: {str(e)}")
     
-    # For any song missing BPM, assign fallback once (without repetitive messages).
     for song in filtered_songs:
         if song.get("bpm", "Unknown") == "Unknown":
             fallback_bpm = int((bpm_start + bpm_end) / 2)
