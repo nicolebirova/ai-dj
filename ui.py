@@ -66,7 +66,7 @@ if st.session_state.authenticated:
     st.session_state.user_info = sp.current_user()
 
     if not st.session_state.data_cached:
-        with st.spinner("Preloading your liked songs data... Please wait."):
+        with st.spinner("Loading your data... please wait <3 (can take up to 5 minutes)"):
             access_token = st.session_state.token_info["access_token"]
             cache_response = requests.get(f"{FASTAPI_URL}/cache_user_data",
                                           params={"access_token": access_token, "debug": True})
@@ -75,7 +75,7 @@ if st.session_state.authenticated:
                 st.success("Your liked songs have been preloaded!")
             else:
                 st.error("Error preloading your data. Please try again.")
-        st.experimental_rerun()
+        st.rerun()
 
     st.sidebar.header("🎶 Your Favorites 🎧")
     if not st.session_state.favorites_loaded or st.session_state.user_switched:
