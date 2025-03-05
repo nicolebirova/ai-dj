@@ -10,8 +10,8 @@ from fastapi.responses import RedirectResponse
 from dotenv import load_dotenv
 import json
 import re
-from music_utils import get_user_preferences, get_song_metadata, interpret_user_query, generate_constrained_playlist
 from typing import List
+from music_utils import get_user_preferences, get_song_metadata, interpret_user_query, generate_constrained_playlist, cache_labeled_liked_songs
 
 load_dotenv()
 
@@ -66,3 +66,12 @@ def save_playlist(
     playlist = sp.user_playlist_create(user_id, playlist_name, public=True)
     sp.playlist_add_items(playlist["id"], track_uris)
     return {"message": f"Playlist '{playlist_name}' created!", "url": playlist["external_urls"]["spotify"]}
+
+
+@app.get("/cache_user_data")
+def cache_user_data(access_token: str = Query(..., description="User's Spotify access token"), debug: bool = Query(False)):
+    """
+    When a user signs in, pre-fetch and label all liked songs and cache them.
+    """
+    labeled_songs = cache_labeled_liked_songs(access_token, debug=debug)
+    return {"cached_count": len(labeled_songs)}

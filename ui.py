@@ -28,9 +28,9 @@ sp_oauth = SpotifyOAuth(
     cache_path=f"{CACHE_PATH}/token_info.json"
 )
 
-for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "playlist", "album_covers", "show_auth", "user_switched"]:
+for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "playlist", "album_covers", "data_cached", "show_auth", "user_switched"]:
     if key not in st.session_state:
-        st.session_state[key] = False if "authenticated" in key else None if "token_info" in key else []
+        st.session_state[key] = False if "authenticated" in key or key=="data_cached" else None if "token_info" in key else []
 
 if not st.session_state.authenticated:
     st.title("🎵 Welcome to Your AI DJ! 🎶")
@@ -54,6 +54,7 @@ if not st.session_state.authenticated:
                 sp = spotipy.Spotify(auth=token_info["access_token"])
                 st.session_state.user_info = sp.current_user()
                 st.success(f"✅ Logged in as {st.session_state.user_info['display_name']}!")
+                st.session_state.data_cached = False
                 st.rerun() 
             except Exception as e:
                 st.error(f"❌ Authentication failed: {e}")
@@ -63,6 +64,19 @@ if not st.session_state.authenticated:
 if st.session_state.authenticated:
     sp = spotipy.Spotify(auth=st.session_state.token_info["access_token"])
     st.session_state.user_info = sp.current_user()
+
+    if not st.session_state.data_cached:
+        with st.spinner("Preloading your liked songs data... Please wait."):
+            access_token = st.session_state.token_info["access_token"]
+            cache_response = requests.get(f"{FASTAPI_URL}/cache_user_data",
+                                          params={"access_token": access_token, "debug": True})
+            if cache_response.status_code == 200:
+                st.session_state.data_cached = True
+                st.success("Your liked songs have been preloaded!")
+            else:
+                st.error("Error preloading your data. Please try again.")
+        st.experimental_rerun()
+
     st.sidebar.header("🎶 Your Favorites 🎧")
     if not st.session_state.favorites_loaded or st.session_state.user_switched:
         top_artists = sp.current_user_top_artists(limit=3)["items"]

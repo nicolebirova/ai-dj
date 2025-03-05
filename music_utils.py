@@ -650,3 +650,58 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         return {"playlist": playlist, "reasoning": reasoning}
     else:
         return {"playlist": playlist}
+
+##
+
+def label_song_with_artist_info(song, debug=False):
+    """
+    Given a song (with keys 'name' and 'artist'), fetch additional artist info (e.g., genres)
+    and add it to the song.
+    """
+    try:
+        sp = spotipy.Spotify(auth_manager=sp_oauth)
+        results = sp.search(q=f"artist:{song['artist']}", type="artist", limit=1)
+        if results["artists"]["items"]:
+            artist_info = results["artists"]["items"][0]
+            song["labeled_genres"] = artist_info.get("genres", [])
+            song["artist_info"] = artist_info  
+        else:
+            song["labeled_genres"] = []
+    except Exception as e:
+        if debug:
+            print(f"[DEBUG] Error labeling song {song['name']} by {song['artist']}: {e}")
+        song["labeled_genres"] = []
+    return song
+
+def cache_labeled_liked_songs(access_token, debug=False):
+    """
+    Pre-fetch all liked songs, label each with artist info/genres, and cache the processed results.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
+    loop.close()
+    liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
+    with ThreadPoolExecutor() as executor:
+        labeled_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
+    filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
+    data = {"timestamp": time.time(), "items": labeled_songs}
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    if debug:
+        print(f"[DEBUG] Cached {len(labeled_songs)} labeled liked songs.")
+    return labeled_songs
+
+def load_labeled_liked_songs_cache(ttl=43200, debug=False):
+    """
+    Load processed liked songs from cache if still valid.
+    """
+    filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if time.time() - data.get("timestamp", 0) < ttl:
+                if debug:
+                    print(f"[DEBUG] Loaded {len(data.get('items', []))} labeled liked songs from cache.")
+                return data.get("items", [])
+    return None
