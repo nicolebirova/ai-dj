@@ -28,9 +28,14 @@ sp_oauth = SpotifyOAuth(
     cache_path=f"{CACHE_PATH}/token_info.json"
 )
 
-for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "playlist", "data_cached", "show_auth", "user_switched"]:
+for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "playlist", "data_cached", "show_auth", "user_switched", "debug_info"]:
     if key not in st.session_state:
-        st.session_state[key] = False if key in ["authenticated", "data_cached"] else None
+        if key in ["authenticated", "data_cached", "favorites_loaded", "user_switched"]:
+            st.session_state[key] = False
+        elif key in ["playlist", "debug_info"]:
+            st.session_state[key] = []
+        else:
+            st.session_state[key] = None
 
 if not st.session_state.authenticated:
     st.title("🎵 Welcome to Your AI DJ! 🎶")
@@ -103,7 +108,6 @@ if st.session_state.authenticated:
     debug_mode = st.checkbox("Show Reasoning (Debugging)", value=False)
     
     if st.button("Generate Playlist"):
-        FASTAPI_URL = "https://ai-dj-o4qg.onrender.com"
         access_token = st.session_state.token_info["access_token"]
         response = requests.get(f"{FASTAPI_URL}/generate_playlist", 
                                 params={"user_query": user_query, "debug": debug_mode, "access_token": access_token})

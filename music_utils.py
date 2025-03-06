@@ -267,6 +267,7 @@ def get_song_metadata(track_name, artist_name):
             bpm = data.get("rhythm", {}).get("bpm", "Unknown")
     return {"bpm": bpm, "mood": "Unknown"}
 
+
 def get_reference_track_details(reference_track, debug=False):
     if " by " in reference_track.lower():
         parts = re.split(r"\s+by\s+", reference_track, flags=re.IGNORECASE)
@@ -333,6 +334,7 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5, debug=
          if debug:
              print(f"[DEBUG] Last.fm API error: Status code {response.status_code}")
     return []
+
 
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
@@ -547,6 +549,9 @@ def validate_playlist(playlist, constraints, debug=False):
     return validation_log
 
 def generate_constrained_playlist(user_query, access_token=None, debug=False):
+    """
+    Generates a playlist based on the user query and enriches each track with its album cover and track URI.
+    """
     if debug:
         constraints, reasoning = interpret_user_query(user_query, debug=debug)
     else:
@@ -688,11 +693,14 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     sp = spotipy.Spotify(auth=access_token)
     enriched_songs = []
     for song in filtered_songs[:num_songs]:
-        query = f"{song['title']} {song['artist']}"
+        query = f"track:{song['title']} artist:{song['artist']}"
         search_result = sp.search(q=query, type="track", limit=1)
         if search_result["tracks"]["items"]:
             track = search_result["tracks"]["items"][0]
-            album_cover = track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200"
+            if track["album"]["images"]:
+                album_cover = track["album"]["images"][0]["url"]
+            else:
+                album_cover = "https://via.placeholder.com/200"
             song["album_cover"] = album_cover
             song["uri"] = track["uri"]
         else:
