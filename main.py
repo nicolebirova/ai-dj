@@ -75,7 +75,7 @@ def save_playlist(
 @app.get("/cache_user_data")
 def cache_user_data(access_token: str = Query(..., description="User's Spotify access token"), debug: bool = Query(False)):
     """
-    Pre-fetch and label all liked songs, then cache the processed data.
+    Pre-fetch and label all liked songs and cache the processed data.
     """
     labeled_songs = cache_labeled_liked_songs(access_token, debug=debug)
     return {"cached_count": len(labeled_songs)}

@@ -1,5 +1,5 @@
 #########################################################
-# This file contains the UI interface implementation. ##
+## This file contains the UI interface implementation. ##
 #########################################################
 import streamlit as st
 import requests
@@ -28,7 +28,7 @@ sp_oauth = SpotifyOAuth(
     cache_path=f"{CACHE_PATH}/token_info.json"
 )
 
-for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "playlist", "album_covers", "track_uris", "data_cached", "show_auth", "user_switched"]:
+for key in ["authenticated", "token_info", "user_info", "favorites_loaded", "playlist", "data_cached", "show_auth", "user_switched"]:
     if key not in st.session_state:
         st.session_state[key] = False if key in ["authenticated", "data_cached"] else None
 
@@ -100,7 +100,6 @@ if st.session_state.authenticated:
 
     st.title("🎵 AI DJ - Generate Your Playlist")
     user_query = st.text_input("Enter your playlist request 🎶:", "")
-    
     debug_mode = st.checkbox("Show Reasoning (Debugging)", value=False)
     
     if st.button("Generate Playlist"):
@@ -113,18 +112,6 @@ if st.session_state.authenticated:
             if isinstance(data, dict) and "playlist" in data:
                 st.session_state.playlist = data["playlist"]
                 st.session_state.debug_info = data.get("reasoning", [])
-                st.session_state.album_covers = []
-                st.session_state.track_uris = []
-                for song in st.session_state.playlist:
-                    search_result = sp.search(q=f"{song['title']} {song['artist']}", type="track", limit=1)
-                    if search_result["tracks"]["items"]:
-                        track = search_result["tracks"]["items"][0]
-                        album_cover = track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200"
-                        st.session_state.album_covers.append(album_cover)
-                        st.session_state.track_uris.append(track["uri"])
-                    else:
-                        st.session_state.album_covers.append("https://via.placeholder.com/200")
-                        st.session_state.track_uris.append(None)
                 st.rerun()
         else:
             st.error("Error generating playlist. Check API connection.")
@@ -137,7 +124,8 @@ if st.session_state.authenticated and st.session_state.playlist:
         with st.container():
             col1, col2 = st.columns([1, 4])
             with col1:
-                st.image(st.session_state.album_covers[i] if st.session_state.album_covers[i] else "https://via.placeholder.com/200", use_container_width=True)
+                cover_url = song.get("album_cover", "https://via.placeholder.com/200")
+                st.image(cover_url, use_container_width=True)
             with col2:
                 st.write(f"**{song['title']}** - {song['artist']}")
                 search_query = urllib.parse.quote(f"{song['title']} {song['artist']}")
@@ -146,25 +134,24 @@ if st.session_state.authenticated and st.session_state.playlist:
     st.subheader("Save Your Playlist to Spotify")
     playlist_name = st.text_input("Enter a name for your playlist:")
     if st.button("Save Playlist"):
+        track_uris = [song.get("uri") for song in st.session_state.playlist]
         params = {
             "playlist_name": playlist_name,
-            "track_uris": st.session_state.track_uris,  
+            "track_uris": track_uris,
             "access_token": st.session_state.token_info["access_token"]
         }
-        response = requests.get(f"{FASTAPI_URL}/save_playlist", params=params)
-        if response.status_code == 200:
-            data = response.json()
-            st.success(f"Playlist '{playlist_name}' saved! You can view it here: {data.get('url')}")
+        save_resp = requests.get(f"{FASTAPI_URL}/save_playlist", params=params)
+        if save_resp.status_code == 200:
+            save_data = save_resp.json()
+            st.success(f"Playlist '{playlist_name}' saved! You can view it here: {save_data.get('url')}")
         else:
             st.error("Error saving playlist. Please check your API connection.")
     
-    if debug_mode and "debug_info" in st.session_state and st.session_state.debug_info:
+    if debug_mode and st.session_state.debug_info:
         with st.expander("Debugging Info - Chain-of-Thought Reasoning"):
             for line in st.session_state.debug_info:
                 st.write(line)
     if st.button("Make a New Playlist Request"):
-        st.session_state.playlist = None
-        st.session_state.album_covers = []
-        st.session_state.track_uris = []
+        st.session_state.playlist = []
         st.session_state.debug_info = []
         st.rerun()

@@ -133,7 +133,7 @@ def save_top_tracks_cache(items):
 def label_song_with_artist_info(song, debug=False):
     """
     Enrich a song (with 'name' and 'artist') by fetching additional artist metadata.
-    Adds a 'labeled_genres' field (and optionally other info).
+    Adds a 'labeled_genres' field.
     """
     try:
         sp = spotipy.Spotify(auth_manager=sp_oauth)
@@ -220,7 +220,7 @@ def get_user_preferences(access_token=None, debug=False):
         liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
         with ThreadPoolExecutor() as executor:
             labeled_liked_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
-        save_cache(LIKED_SONGS_CACHE_FILENAME, liked_songs)  
+        save_cache(LIKED_SONGS_CACHE_FILENAME, liked_songs)
     liked_track_names = labeled_liked_songs
     
     return {
@@ -627,10 +627,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         filtered_songs = [song for song in filtered_songs if song["artist"].strip().lower() != exclude]
         if debug:
             reasoning.append(f"Excluded {before - len(filtered_songs)} song(s) by '{exclude}'.")
-    if len(filtered_songs) >= num_songs:
-        if debug:
-            reasoning.append(f"Enough songs found ({len(filtered_songs)}) from user library; skipping additional retrieval.")
-    else:
+    if len(filtered_songs) < num_songs:
         needed = num_songs - len(filtered_songs)
         reference_line = ""
         if reference_track:
@@ -687,15 +684,22 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         filtered_songs = sorted(filtered_songs, key=lambda s: s.get("bpm", int((bpm_start+bpm_end)/2)))
         if debug:
             reasoning.append("Sorted songs by BPM for gradual progression.")
-    user_data = get_user_preferences(access_token=access_token, debug=debug)
-    personal_tracks = {
-        (song["name"].strip().lower(), song["artist"].strip().lower())
-        for song in user_data["liked_songs"] + user_data["top_tracks"]
-    }
-    for song in filtered_songs:
-        key = (song.get("name", "").strip().lower(), song.get("artist", "").strip().lower())
-        if key in personal_tracks:
-            song["liked"] = True
+    
+    sp = spotipy.Spotify(auth=access_token)
+    enriched_songs = []
+    for song in filtered_songs[:num_songs]:
+        query = f"{song['title']} {song['artist']}"
+        search_result = sp.search(q=query, type="track", limit=1)
+        if search_result["tracks"]["items"]:
+            track = search_result["tracks"]["items"][0]
+            album_cover = track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200"
+            song["album_cover"] = album_cover
+            song["uri"] = track["uri"]
+        else:
+            song["album_cover"] = "https://via.placeholder.com/200"
+            song["uri"] = None
+        enriched_songs.append(song)
+    
     playlist = [
         {"title": song.get("name", song.get("title")),
          "artist": song["artist"],
@@ -703,8 +707,10 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
          "mood": song.get("mood", "Unknown"),
          "source": song.get("source", "unknown"),
          "reason": song.get("reason", "No reason provided"),
-         "bpm": song.get("bpm", "Unknown")}
-        for song in filtered_songs[:num_songs]
+         "bpm": song.get("bpm", "Unknown"),
+         "album_cover": song.get("album_cover"),
+         "uri": song.get("uri")}
+        for song in enriched_songs
     ]
     if debug:
         validation_log = validate_playlist(playlist, constraints, debug=debug)
