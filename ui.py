@@ -75,7 +75,7 @@ if st.session_state.authenticated:
                 st.success("Your liked songs have been preloaded!")
             else:
                 st.error("Error preloading your data. Please try again.")
-        st.experimental_rerun()
+        st.rerun()
 
     st.sidebar.header("🎶 Your Favorites 🎧")
     if not st.session_state.favorites_loaded or st.session_state.user_switched:
