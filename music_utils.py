@@ -14,7 +14,6 @@ from spotipy.oauth2 import SpotifyOAuth
 from urllib.parse import quote
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
-from difflib import SequenceMatcher
 
 load_dotenv()
 
@@ -25,7 +24,7 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-ENABLE_SONG_EXPLANATION = False  # Set to True for extra explanations
+ENABLE_SONG_EXPLANATION = False  # Set to True for extra explanation per song.
 
 CACHE_DIR = "cache"
 if not os.path.exists(CACHE_DIR):
@@ -154,18 +153,12 @@ def label_song_with_artist_info(song, debug=False):
 def cache_labeled_liked_songs(access_token, debug=False):
     """
     Pre-fetch all liked songs, enrich each with artist metadata, and cache the labeled results.
-    Now also cache album cover and Spotify URI data.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
     loop.close()
-    liked_songs = [{
-        "name": track["track"]["name"],
-        "artist": track["track"]["artists"][0]["name"],
-        "album_cover": track["track"]["album"]["images"][0]["url"] if track["track"]["album"]["images"] else "https://via.placeholder.com/200",
-        "uri": track["track"]["uri"]
-    } for track in liked_songs_raw]
+    liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
     with ThreadPoolExecutor() as executor:
         labeled_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
     filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
@@ -216,12 +209,7 @@ def get_user_preferences(access_token=None, debug=False):
     else:
         top_tracks = sp.current_user_top_tracks(limit=10)["items"]
         save_top_tracks_cache(top_tracks)
-    track_names = [{
-        "name": track["name"],
-        "artist": track["artists"][0]["name"],
-        "album_cover": track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200",
-        "uri": track["uri"]
-    } for track in top_tracks]
+    track_names = [{"name": track["name"], "artist": track["artists"][0]["name"]} for track in top_tracks]
     
     labeled_liked_songs = load_labeled_liked_songs_cache(ttl=43200, debug=debug)
     if labeled_liked_songs is None:
@@ -229,12 +217,7 @@ def get_user_preferences(access_token=None, debug=False):
         asyncio.set_event_loop(loop)
         liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
         loop.close()
-        liked_songs = [{
-            "name": track["track"]["name"],
-            "artist": track["track"]["artists"][0]["name"],
-            "album_cover": track["track"]["album"]["images"][0]["url"] if track["track"]["album"]["images"] else "https://via.placeholder.com/200",
-            "uri": track["track"]["uri"]
-        } for track in liked_songs_raw]
+        liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
         with ThreadPoolExecutor() as executor:
             labeled_liked_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
         save_cache(LIKED_SONGS_CACHE_FILENAME, liked_songs)
@@ -315,6 +298,41 @@ def get_reference_track_details(reference_track, debug=False):
          print(f"[DEBUG] get_reference_track_details: No track found for '{reference_track}'")
     return None
 
+def get_top_tracks_lastfm(artist, limit=5, debug=False):
+    """
+    Retrieves the top tracks for a given artist using Last.fm's API.
+    """
+    api_key = os.environ.get("LASTFM_API_KEY")
+    url = "http://ws.audioscrobbler.com/2.0/"
+    params = {
+        "method": "artist.gettoptracks",
+        "artist": artist,
+        "api_key": api_key,
+        "format": "json",
+        "limit": limit
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        tracks = data.get("toptracks", {}).get("track", [])
+        recommendations = []
+        for track in tracks:
+            recommendations.append({
+                "title": track.get("name"),
+                "artist": artist,
+                "bpm": "Unknown",
+                "release_year": "Unknown",
+                "liked": False,
+                "mood": "Unknown",
+                "source": "Last.fm",
+                "reason": f"Top track from Last.fm for artist {artist}."
+            })
+        return recommendations
+    else:
+        if debug:
+            print(f"[DEBUG] Last.fm API error: {response.status_code}")
+    return []
+
 def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5, debug=False):
     api_key = os.environ.get("LASTFM_API_KEY")
     url = "http://ws.audioscrobbler.com/2.0/"
@@ -343,7 +361,9 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5, debug=
                   "bpm": "Unknown",
                   "release_year": "Unknown",
                   "liked": False,
-                  "mood": "Unknown"
+                  "mood": "Unknown",
+                  "source": "Last.fm",
+                  "reason": f"Recommended by Last.fm based on reference track '{reference_track}' by '{reference_artist}'."
              })
          return recommendations
     else:
@@ -563,23 +583,10 @@ def validate_playlist(playlist, constraints, debug=False):
         validation_log.append(msg)
     return validation_log
 
-def similar(a, b):
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
-
-def find_cached_match(song, cached_songs, threshold=0.7):
-    song_title = song.get("title") or song.get("name", "")
-    for csong in cached_songs:
-        cached_title = csong.get("name", "")
-        title_ratio = similar(song_title, cached_title)
-        artist_ratio = similar(song["artist"], csong["artist"])
-        if title_ratio > threshold and artist_ratio > threshold:
-            return csong
-    return None
-
 def generate_constrained_playlist(user_query, access_token=None, debug=False):
     """
     Generates a playlist based on the user query and enriches each track with its album cover and track URI.
-    Now avoids using Spotify search/recommendation endpoints by leveraging cached real song data.
+    If a song cannot be found with an album cover, an alternative song is generated that fits the user query constraints.
     """
     if debug:
         constraints, reasoning = interpret_user_query(user_query, debug=debug)
@@ -655,12 +662,15 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
             else:
                 if debug:
                     reasoning.append("No recommendations from Last.fm; falling back on AI generation.")
-    if constraints.get("exclude_artist"):
-        exclude = constraints["exclude_artist"].strip().lower()
-        before = len(filtered_songs)
-        filtered_songs = [song for song in filtered_songs if song["artist"].strip().lower() != exclude]
-        if debug:
-            reasoning.append(f"Excluded {before - len(filtered_songs)} song(s) by '{exclude}'.")
+        elif constraints.get("target_artist"):
+            external_recs = get_top_tracks_lastfm(constraints.get("target_artist"), limit=num_songs, debug=debug)
+            if external_recs:
+                for rec in external_recs:
+                    rec["source"] = "Last.fm"
+                    rec["reason"] = f"Recommended by Last.fm based on artist {constraints.get('target_artist')}."
+                filtered_songs += external_recs
+                if debug:
+                    reasoning.append(f"Received {len(external_recs)} recommendations from Last.fm for artist {constraints.get('target_artist')}.")
     if len(filtered_songs) < num_songs:
         needed = num_songs - len(filtered_songs)
         reference_line = ""
@@ -719,19 +729,59 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         if debug:
             reasoning.append("Sorted songs by BPM for gradual progression.")
     
-    user_data = get_user_preferences(access_token=access_token, debug=debug)
-    cached_songs = user_data["liked_songs"] + user_data["top_tracks"]
-    
+    sp = spotipy.Spotify(auth=access_token)
     enriched_songs = []
     for song in filtered_songs[:num_songs]:
-        if not song.get("album_cover") or not song.get("uri"):
-            match = find_cached_match(song, cached_songs)
-            if match:
-                song["album_cover"] = match.get("album_cover", "https://via.placeholder.com/200")
-                song["uri"] = match.get("uri")
-        if not song.get("album_cover"):
-            song["album_cover"] = "https://via.placeholder.com/200"
-        enriched_songs.append(song)
+        track_found = False
+        candidate_song = song
+        attempt_count = 0
+        while not track_found and attempt_count < 3:
+            attempt_count += 1
+            query = f"track:{candidate_song['title']} artist:{candidate_song['artist']}"
+            search_result = sp.search(q=query, type="track", limit=1)
+            if not search_result["tracks"]["items"]:
+                fallback_query = f"{candidate_song['title']} {candidate_song['artist']}"
+                search_result = sp.search(q=fallback_query, type="track", limit=1)
+            if search_result["tracks"]["items"]:
+                track = search_result["tracks"]["items"][0]
+                if track["album"]["images"]:
+                    candidate_song["album_cover"] = track["album"]["images"][0]["url"]
+                    candidate_song["uri"] = track["uri"]
+                    track_found = True
+                else:
+                    if debug:
+                        reasoning.append(f"Song '{candidate_song.get('title')}' by '{candidate_song['artist']}' has no album cover. Attempt {attempt_count}.")
+                    alt_prompt = f"Generate a song suggestion with genre {genres}, BPM between {bpm_start} and {bpm_end}, release years between {release_year_range[0]} and {release_year_range[1]}, and mood constraints {mood_constraints}."
+                    try:
+                        response = openai.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[
+                                {"role": "system", "content": "You are a music expert AI that generates song recommendations."},
+                                {"role": "user", "content": alt_prompt}
+                            ],
+                            temperature=0.7
+                        )
+                        raw_content = response.choices[0].message.content
+                        json_part = re.search(r"\[\s*{.*}\s*\]", raw_content, re.DOTALL)
+                        if json_part:
+                            ai_songs = json.loads(json_part.group(0))
+                            if ai_songs:
+                                candidate_song = ai_songs[0]
+                                candidate_song["liked"] = False
+                                candidate_song["source"] = "AI"
+                                candidate_song["reason"] = "Alternative generated by AI due to missing album cover."
+                                continue
+                    except Exception as e:
+                        if debug:
+                            reasoning.append(f"Error during alternative AI generation: {str(e)}")
+                    candidate_song["album_cover"] = "https://via.placeholder.com/200"
+                    candidate_song["uri"] = None
+                    track_found = True
+            else:
+                candidate_song["album_cover"] = "https://via.placeholder.com/200"
+                candidate_song["uri"] = None
+                track_found = True
+        enriched_songs.append(candidate_song)
     
     playlist = [
         {"title": song.get("name", song.get("title")),
