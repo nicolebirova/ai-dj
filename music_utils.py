@@ -575,7 +575,7 @@ def validate_playlist(playlist, constraints, debug=False):
                 song["bpm"] = fallback_bpm
                 msg += f"Assigned fallback BPM of {fallback_bpm}. "
         else:
-            msg += "No BPM validation performed. "
+            msg += "Constraints followed."
         if "source" in song and "reason" in song:
             msg += f"Source: {song['source']} because {song['reason']}."
         else:
