@@ -693,14 +693,12 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
     sp = spotipy.Spotify(auth=access_token)
     enriched_songs = []
     for song in filtered_songs[:num_songs]:
-        query = f"track:{song['title']} artist:{song['artist']}"
+        song_title = song.get("name") or song.get("title")
+        query = f'track:"{song_title}" artist:"{song["artist"]}"'
         search_result = sp.search(q=query, type="track", limit=1)
         if search_result["tracks"]["items"]:
             track = search_result["tracks"]["items"][0]
-            if track["album"]["images"]:
-                album_cover = track["album"]["images"][0]["url"]
-            else:
-                album_cover = "https://via.placeholder.com/200"
+            album_cover = track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200"
             song["album_cover"] = album_cover
             song["uri"] = track["uri"]
         else:
