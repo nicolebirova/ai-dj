@@ -14,6 +14,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from urllib.parse import quote
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
 
 load_dotenv()
 
@@ -24,7 +25,7 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-library-read"
 )
 
-ENABLE_SONG_EXPLANATION = False  # Set to True for extra explanation per song.
+ENABLE_SONG_EXPLANATION = False  # Set to True for extra explanations
 
 CACHE_DIR = "cache"
 if not os.path.exists(CACHE_DIR):
@@ -153,12 +154,18 @@ def label_song_with_artist_info(song, debug=False):
 def cache_labeled_liked_songs(access_token, debug=False):
     """
     Pre-fetch all liked songs, enrich each with artist metadata, and cache the labeled results.
+    Now also cache album cover and Spotify URI data.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
     loop.close()
-    liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
+    liked_songs = [{
+        "name": track["track"]["name"],
+        "artist": track["track"]["artists"][0]["name"],
+        "album_cover": track["track"]["album"]["images"][0]["url"] if track["track"]["album"]["images"] else "https://via.placeholder.com/200",
+        "uri": track["track"]["uri"]
+    } for track in liked_songs_raw]
     with ThreadPoolExecutor() as executor:
         labeled_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
     filename = os.path.join(CACHE_DIR, "labeled_liked_songs_cache.json")
@@ -209,7 +216,12 @@ def get_user_preferences(access_token=None, debug=False):
     else:
         top_tracks = sp.current_user_top_tracks(limit=10)["items"]
         save_top_tracks_cache(top_tracks)
-    track_names = [{"name": track["name"], "artist": track["artists"][0]["name"]} for track in top_tracks]
+    track_names = [{
+        "name": track["name"],
+        "artist": track["artists"][0]["name"],
+        "album_cover": track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200",
+        "uri": track["uri"]
+    } for track in top_tracks]
     
     labeled_liked_songs = load_labeled_liked_songs_cache(ttl=43200, debug=debug)
     if labeled_liked_songs is None:
@@ -217,7 +229,12 @@ def get_user_preferences(access_token=None, debug=False):
         asyncio.set_event_loop(loop)
         liked_songs_raw = loop.run_until_complete(async_get_all_liked_songs(access_token, debug=debug))
         loop.close()
-        liked_songs = [{"name": track["track"]["name"], "artist": track["track"]["artists"][0]["name"]} for track in liked_songs_raw]
+        liked_songs = [{
+            "name": track["track"]["name"],
+            "artist": track["track"]["artists"][0]["name"],
+            "album_cover": track["track"]["album"]["images"][0]["url"] if track["track"]["album"]["images"] else "https://via.placeholder.com/200",
+            "uri": track["track"]["uri"]
+        } for track in liked_songs_raw]
         with ThreadPoolExecutor() as executor:
             labeled_liked_songs = list(executor.map(lambda s: label_song_with_artist_info(s, debug=debug), liked_songs))
         save_cache(LIKED_SONGS_CACHE_FILENAME, liked_songs)
@@ -266,7 +283,6 @@ def get_song_metadata(track_name, artist_name):
             data = response.json()
             bpm = data.get("rhythm", {}).get("bpm", "Unknown")
     return {"bpm": bpm, "mood": "Unknown"}
-
 
 def get_reference_track_details(reference_track, debug=False):
     if " by " in reference_track.lower():
@@ -334,7 +350,6 @@ def get_similar_tracks_lastfm(reference_track, reference_artist, limit=5, debug=
          if debug:
              print(f"[DEBUG] Last.fm API error: Status code {response.status_code}")
     return []
-
 
 def interpret_user_query(user_query, debug=False):
     reasoning = [] if debug else None
@@ -548,9 +563,23 @@ def validate_playlist(playlist, constraints, debug=False):
         validation_log.append(msg)
     return validation_log
 
+def similar(a, b):
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+def find_cached_match(song, cached_songs, threshold=0.7):
+    song_title = song.get("title") or song.get("name", "")
+    for csong in cached_songs:
+        cached_title = csong.get("name", "")
+        title_ratio = similar(song_title, cached_title)
+        artist_ratio = similar(song["artist"], csong["artist"])
+        if title_ratio > threshold and artist_ratio > threshold:
+            return csong
+    return None
+
 def generate_constrained_playlist(user_query, access_token=None, debug=False):
     """
     Generates a playlist based on the user query and enriches each track with its album cover and track URI.
+    Now avoids using Spotify search/recommendation endpoints by leveraging cached real song data.
     """
     if debug:
         constraints, reasoning = interpret_user_query(user_query, debug=debug)
@@ -690,20 +719,18 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         if debug:
             reasoning.append("Sorted songs by BPM for gradual progression.")
     
-    sp = spotipy.Spotify(auth=access_token)
+    user_data = get_user_preferences(access_token=access_token, debug=debug)
+    cached_songs = user_data["liked_songs"] + user_data["top_tracks"]
+    
     enriched_songs = []
     for song in filtered_songs[:num_songs]:
-        song_title = song.get("name") or song.get("title")
-        query = f'track:"{song_title}" artist:"{song["artist"]}"'
-        search_result = sp.search(q=query, type="track", limit=1)
-        if search_result["tracks"]["items"]:
-            track = search_result["tracks"]["items"][0]
-            album_cover = track["album"]["images"][0]["url"] if track["album"]["images"] else "https://via.placeholder.com/200"
-            song["album_cover"] = album_cover
-            song["uri"] = track["uri"]
-        else:
+        if not song.get("album_cover") or not song.get("uri"):
+            match = find_cached_match(song, cached_songs)
+            if match:
+                song["album_cover"] = match.get("album_cover", "https://via.placeholder.com/200")
+                song["uri"] = match.get("uri")
+        if not song.get("album_cover"):
             song["album_cover"] = "https://via.placeholder.com/200"
-            song["uri"] = None
         enriched_songs.append(song)
     
     playlist = [
