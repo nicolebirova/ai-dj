@@ -575,7 +575,7 @@ def validate_playlist(playlist, constraints, debug=False):
                 song["bpm"] = fallback_bpm
                 msg += f"Assigned fallback BPM of {fallback_bpm}. "
         else:
-            msg += "Constraints followed."
+            msg += "No BPM validation performed. "
         if "source" in song and "reason" in song:
             msg += f"Source: {song['source']} because {song['reason']}."
         else:
@@ -737,10 +737,11 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
         attempt_count = 0
         while not track_found and attempt_count < 3:
             attempt_count += 1
-            query = f"track:{candidate_song['title']} artist:{candidate_song['artist']}"
+            song_title = candidate_song.get("title") or candidate_song.get("name")
+            query = f"track:{song_title} artist:{candidate_song['artist']}"
             search_result = sp.search(q=query, type="track", limit=1)
             if not search_result["tracks"]["items"]:
-                fallback_query = f"{candidate_song['title']} {candidate_song['artist']}"
+                fallback_query = f"{song_title} {candidate_song['artist']}"
                 search_result = sp.search(q=fallback_query, type="track", limit=1)
             if search_result["tracks"]["items"]:
                 track = search_result["tracks"]["items"][0]
@@ -750,7 +751,7 @@ def generate_constrained_playlist(user_query, access_token=None, debug=False):
                     track_found = True
                 else:
                     if debug:
-                        reasoning.append(f"Song '{candidate_song.get('title')}' by '{candidate_song['artist']}' has no album cover. Attempt {attempt_count}.")
+                        reasoning.append(f"Song '{song_title}' by '{candidate_song['artist']}' has no album cover. Attempt {attempt_count}.")
                     alt_prompt = f"Generate a song suggestion with genre {genres}, BPM between {bpm_start} and {bpm_end}, release years between {release_year_range[0]} and {release_year_range[1]}, and mood constraints {mood_constraints}."
                     try:
                         response = openai.chat.completions.create(
